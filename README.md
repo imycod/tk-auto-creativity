@@ -17,7 +17,7 @@ npm run start:dev
 // cd vi-admin
 npm run dev
 ```
-消费服务 tk-auto 可单独部署，在另一台机子上消费，2个轮询一个轮询是浏览器特定地址的自动化，第二个轮询是把生成好的视频下载到NAS里协议samba
+消费服务 tk-auto 可单独部署，在另一台机子上消费，2个轮询一个轮询是浏览器特定地址的自动化，第二个轮询是把生成好的视频下载到NAS里协议samba, 浏览器多开手动登录，程序会记录不同的profile根据profile下标分别消费生成视频任务，后续下载视频时根据profile下标找到该任务所在浏览器下载。
 <img width="1650" height="843" alt="img_v3_0213c_76457929-1c04-434e-a5b9-18ffe335c24g" src="https://github.com/user-attachments/assets/7dcd445e-0124-4923-af9b-446fa5dd2ae4" />
 
 
