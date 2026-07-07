@@ -1,0 +1,16 @@
+docker compose up -d --build // 构建多项目服务镜像 - 用于ng 前后端通信
+
+docker build --no-cache -t auto-vi . // 构建单个项目镜像
+
+docker save -o vi-system.tar vi-system:latest // 导出镜像
+
+
+
+root@aae34d84887f:/app# ls /app/uploads
+root@aae34d84887f:/app# df -h | grep uploads
+//192.168.50.100/docker/vi-system/uploads   98T  1.4T   97T   2% /app/uploads
+root@aae34d84887f:/app# ls /app/uploads/images/
+ls: cannot access '/app/uploads/images/': No such file or directory
+root@aae34d84887f:/app# ls /app/uploads/images/
+ls: cannot access '/app/uploads/images/': No such file or directory
+root@aae34d84887f:/app# 
