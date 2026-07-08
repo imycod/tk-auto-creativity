@@ -10,6 +10,7 @@ import { basename, join } from 'path';
 import { BrowserService } from '../core/browser/browser.service';
 import {
   clearCreativeStudioInputs,
+  ensureChatboxExpanded,
   fillCreativeStudioPrompt,
   submitCreativeStudioPrompt,
   uploadImagesToCreativeStudio,
@@ -206,16 +207,8 @@ export class ConsumerService {
       timeout: 15000,
     });
 
-    // 有参考图时确保 Upload 按钮已渲染（复用标签页可能 chatbox 在但上传区未就绪）
-    if (imagePaths?.length) {
-      await page
-        .locator(
-          'button[aria-label="Upload"], button[aria-label="上传"], button[aria-label*="pload" i]',
-        )
-        .first()
-        .waitFor({ state: 'visible', timeout: 15000 });
-    }
-
+    // 复用标签页时页面可能在顶部，chatbox 折叠导致 Upload 不可见，先滚到底并展开
+    await ensureChatboxExpanded(page);
 
     // 清空上一个任务残留的图片与提示词，再回填当前任务内容
     await clearCreativeStudioInputs(page);

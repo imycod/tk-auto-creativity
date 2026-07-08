@@ -88,37 +88,15 @@ async function dismissUploadOverlays(page: Page): Promise<void> {
   await page.keyboard.press('Escape').catch(() => undefined);
   await page.keyboard.press('Escape').catch(() => undefined);
   await page.mouse.click(10, 10).catch(() => undefined);
-  await ensureChatboxExpanded(page);
+  await ensureChatboxReadyForUpload(page);
   await page.waitForTimeout(200);
 }
 
 /**
- * 滚动到页面底部并展开 chatbox，确保输入框 / Upload 可见可操作。
- * 复用标签页处理完视频后页面常在顶部，chatbox 处于折叠态，需先滚到底再操作。
+ * chatbox 折叠时会有 aria-label="Expand chatbox" 的全屏透明按钮（opacity-0）
+ * 盖在 Upload 上方，Playwright 正常 click 会被判定为 pointer events intercepted。
  */
-export async function ensureChatboxExpanded(page: Page): Promise<void> {
-  await page
-    .evaluate(() => {
-      const scrollElToBottom = (el: Element | null) => {
-        if (!el || !(el instanceof HTMLElement)) return;
-        if (el.scrollHeight > el.clientHeight) {
-          el.scrollTop = el.scrollHeight;
-        }
-      };
-
-      scrollElToBottom(document.documentElement);
-      scrollElToBottom(document.body);
-      window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
-
-      document
-        .querySelectorAll('[class*="overflow"], [style*="overflow"]')
-        .forEach((el) => scrollElToBottom(el as Element));
-    })
-    .catch(() => undefined);
-
-  await page.keyboard.press('End').catch(() => undefined);
-  await page.waitForTimeout(300);
-
+async function ensureChatboxReadyForUpload(page: Page): Promise<void> {
   const chatbox = page.locator(CHATBOX_CONTAINER_SELECTOR);
   if ((await chatbox.count()) > 0) {
     await chatbox.first().scrollIntoViewIfNeeded().catch(() => undefined);
@@ -137,7 +115,7 @@ export async function ensureChatboxExpanded(page: Page): Promise<void> {
       );
       chatboxEl?.scrollIntoView({ block: 'end', inline: 'nearest' });
 
-      // 折叠态透明 Expand 层仍会拦截点击，操作前临时禁用 pointer-events
+      // 折叠态透明 Expand 层仍会拦截点击，上传前临时禁用 pointer-events
       document
         .querySelectorAll(
           'button[aria-label="Expand chatbox"], button[aria-label="展开对话框"]',
@@ -149,8 +127,6 @@ export async function ensureChatboxExpanded(page: Page): Promise<void> {
         });
     })
     .catch(() => undefined);
-
-  await page.waitForTimeout(200);
 }
 
 /** 单次上传尝试：先找 file input，再走 filechooser 兜底 */
@@ -234,7 +210,6 @@ async function waitForUsableFileInput(
  * 再回填下一个任务的 promptText 与 imagePaths。
  */
 export async function clearCreativeStudioInputs(page: Page): Promise<void> {
-  await ensureChatboxExpanded(page);
   await removeUploadedImages(page);
   await clearCreativeStudioPrompt(page);
 }
@@ -375,8 +350,6 @@ export async function fillCreativeStudioPrompt(
   page: Page,
   promptText: string,
 ): Promise<void> {
-  await ensureChatboxExpanded(page);
-
   const editor = page.locator('div.ProseMirror[contenteditable="true"]');
   await editor.waitFor({ state: 'visible', timeout: 15000 });
   await editor.first().click();
@@ -438,8 +411,6 @@ async function promptFilled(
  * 点击发送按钮提交（主色 icon-only 按钮），或在输入框按 Enter 兜底。
  */
 export async function submitCreativeStudioPrompt(page: Page): Promise<void> {
-  await ensureChatboxExpanded(page);
-
   const chatbox = page.locator('fieldset[data-chatbox-part="container"]');
   const sendBtn = chatbox.locator(
     'button.button--icon-only.button--color-primary[part="base"], button.button--type-contained.button--icon-only.button--color-primary',

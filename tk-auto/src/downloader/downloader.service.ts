@@ -30,7 +30,7 @@ export class DownloaderService {
 
     this.autoViApiUrl = this.configService.get('AUTO_VI_API_URL') as string;
     const rawShare = this.configService.get('SAMBA_SHARE');
-    this.downloadDir = rawShare ? win32.join(rawShare, 'docker', 'vi-system', 'uploads', 'videos')
+    this.downloadDir = rawShare ? win32.join(rawShare, 'AI素材', 'tk-auto')
       : join(process.cwd(), 'data', 'videos');
 
     // 仅尝试创建，不让网络共享暂不可达导致整个服务启动失败；真正下载时还会再确保一次
