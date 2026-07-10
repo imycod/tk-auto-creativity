@@ -130,9 +130,16 @@ export function useQueued() {
     background: true
   });
 
-  async function onSearch() {
+  async function onSearch(resetPage = false) {
+    if (resetPage) {
+      pagination.currentPage = 1;
+    }
     loading.value = true;
-    const { code, data } = await getTaskQueuedList(toRaw(form));
+    const { code, data } = await getTaskQueuedList({
+      ...toRaw(form),
+      currentPage: pagination.currentPage,
+      pageSize: pagination.pageSize
+    });
     if (code === 200) {
       dataList.value = data.list;
       pagination.total = data.total;
@@ -148,7 +155,7 @@ export function useQueued() {
   const resetForm = formEl => {
     if (!formEl) return;
     formEl.resetFields();
-    onSearch();
+    onSearch(true);
   };
 
   function handleSizeChange(val: number) {
