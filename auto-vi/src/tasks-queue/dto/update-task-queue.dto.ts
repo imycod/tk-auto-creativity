@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsDate } from 'class-validator';
+﻿import { IsString, IsNumber, IsOptional, IsDate } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class UpdateTaskQueueDto {
@@ -12,7 +12,11 @@ export class UpdateTaskQueueDto {
 
   @IsOptional()
   @IsNumber()
-  profileIndex?: number;
+  profileIndex?: number | null;
+
+  @IsOptional()
+  @IsString()
+  workerId?: string | null;
 
   @IsOptional()
   @IsString()

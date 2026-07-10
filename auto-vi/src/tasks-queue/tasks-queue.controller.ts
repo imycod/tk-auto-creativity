@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query } from '@nestjs/common';
+﻿import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query } from '@nestjs/common';
 import { TasksQueueService } from './tasks-queue.service';
 import { UpdateTaskQueueDto } from './dto/update-task-queue.dto';
 import { FindAllTaskQueueDto } from './dto/find-all-task-queue.dto';
@@ -26,12 +26,15 @@ export class TasksQueueController {
   @ApiResponse('获取任务队列状态数量成功')
   findWithStatuss(@Body() dto: FindWithStatussDto): Promise<number> {
     return this.tasksQueueService.findWithStatuss(dto.statuss ?? []);
-  } 
+  }
 
   @Post('claim')
   @ApiResponse('领取任务队列成功')
-  findQueueClaim(@Body('workerId') workerId: string) {
-    return this.tasksQueueService.findQueueClaim(workerId);
+  findQueueClaim(
+    @Body('workerId') workerId: string,
+    @Body('profileIndex') profileIndex: number,
+  ) {
+    return this.tasksQueueService.findQueueClaim(workerId, profileIndex);
   }
 
   @Post('submitted')

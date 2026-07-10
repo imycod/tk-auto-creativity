@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -18,6 +18,7 @@ import {
 import { RemoteTaskQueue } from './interface/remote-task-queue.dto';
 
 const CREATIVE_STUDIO_URL = "https://ads.tiktok.com/creative/creativestudio/image-to-video"
+const SUBMIT_SLOT_FULL = 'SUBMIT_SLOT_FULL';
 
 @Injectable()
 export class ConsumerService {
@@ -25,7 +26,6 @@ export class ConsumerService {
   private isProcessing = false;
   private readonly maxBrowsers: number;
   private claimChain: Promise<unknown> = Promise.resolve();
-  // auto-vi 内网服务基础地址
   private readonly autoViApiUrl: string;
 
   constructor(
@@ -40,11 +40,9 @@ export class ConsumerService {
       : 5;
   }
 
-  // 2分钟轮询一次
   @Interval(2 * 60 * 1000)
   async consumeQueue() {
     if (this.isProcessing) {
-      // 防止重入：上一批未处理完时跳过本次轮询
       this.logger.warn('上一批任务仍在处理中，跳过本次轮询');
       return;
     }
@@ -52,7 +50,6 @@ export class ConsumerService {
     this.logger.log('开始轮询任务队列...');
 
     try {
-      // 改用远端 auto-vi 服务查询任务队列
       const { data: response } = await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks-queue/with-statuss`, {
         statuss: ['pending', 'retrying'],
       }));
@@ -69,8 +66,6 @@ export class ConsumerService {
         `获取到 ${pendingCount} 条待处理任务，启动 ${workerCount} 个浏览器并行消费`,
       );
 
-
-      // 每个 worker 绑定一个浏览器 profile，循环领取并处理任务直到队列清空
       await Promise.all(
         Array.from({ length: workerCount }, (_, profileIndex) =>
           this.runWorker(profileIndex),
@@ -88,31 +83,33 @@ export class ConsumerService {
     const workerId = `worker-${profileIndex}`;
 
     while (true) {
-      const queueItem = await this.claimNextPendingTask(workerId);
+      const queueItem = await this.claimNextPendingTask(workerId, profileIndex);
       if (!queueItem) {
         break;
       }
       const ok = await this.processTask(queueItem, profileIndex);
-      // 失败后不在同一轮询周期内立即重领（避免页面 UI 未恢复时连续 3 次失败）
       if (!ok) {
         break;
       }
     }
   }
 
-  /**
-     * 原子领取下一条待处理任务并标记为 processing。
-     * 通过 claimChain 串行化，确保多个 worker 不会领取到同一条任务。
-     */
-  private claimNextPendingTask(workerId: string): Promise<RemoteTaskQueue | null> {
-    const run = this.claimChain.then(() => this.doClaim(workerId));
+  private claimNextPendingTask(
+    workerId: string,
+    profileIndex: number,
+  ): Promise<RemoteTaskQueue | null> {
+    const run = this.claimChain.then(() => this.doClaim(workerId, profileIndex));
     this.claimChain = run.catch(() => undefined);
     return run;
   }
 
-  private async doClaim(workerId: string): Promise<RemoteTaskQueue | null> {
+  private async doClaim(
+    workerId: string,
+    profileIndex: number,
+  ): Promise<RemoteTaskQueue | null> {
     const { data: response } = await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks-queue/claim`, {
       workerId,
+      profileIndex,
     }));
 
     return response.data as RemoteTaskQueue;
@@ -124,12 +121,10 @@ export class ConsumerService {
   ): Promise<boolean> {
     const { queueId, taskId, task } = queueItem;
 
-    // 执行浏览器自动化生成视频
     try {
       this.logger.log(
         `[worker-${profileIndex}] 开始处理任务 ${taskId}，prompt: ${task.promptText}`,
       );
-      // 获取该任务的参考图（查看 assetType = 'image' 类型 asset）
       const imagePaths = task.assets
         ?.filter((a) => a.assetType === 'image')
         .map((a) => a.assetPath);
@@ -141,7 +136,6 @@ export class ConsumerService {
         profileIndex,
       );
 
-      // 提交成功：记录浏览器序号，状态置为 submitted，等待下载阶段按 promptText 匹配回收视频
       await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
         status: 'submitted',
         stage: 'rendering',
@@ -154,10 +148,34 @@ export class ConsumerService {
       return true;
     } catch (error) {
       const message = (error as Error).message;
+
+      if (message.includes(SUBMIT_SLOT_FULL)) {
+        try {
+          await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
+            status: 'pending',
+            stage: 'init',
+            workerId: null,
+            profileIndex: null,
+            errorMessage: '浏览器并发已满，等待槽位释放后重试',
+          }));
+
+          await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
+            status: 'pending',
+          }));
+        } catch (reportError) {
+          this.logger.error(
+            `[worker-${profileIndex}] 任务 ${taskId} 槽位满退回失败: ${(reportError as Error).message}`,
+          );
+        }
+
+        this.logger.warn(
+          `[worker-${profileIndex}] 任务 ${taskId} 浏览器并发已满，已退回队列等待槽位`,
+        );
+        return false;
+      }
+
       const isFinalFailure = queueItem.retryCount >= 2;
 
-      // 回写失败状态本身也可能出错；用独立 try/catch 兜住，
-      // 避免回写异常向上冒泡变成「轮询异常」而中断整个 worker。
       try {
         await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
           status: isFinalFailure ? 'failed' : 'retrying',
@@ -173,7 +191,7 @@ export class ConsumerService {
         }));
       } catch (reportError) {
         this.logger.error(
-          `[worker-${profileIndex}] 任务 ${taskId} 失败状态回写出错: ${(reportError as Error).message}`,
+          `[worker-${profileIndex}] 任务 ${taskId} 失败状态回写失败: ${(reportError as Error).message}`,
         );
       }
 
@@ -183,7 +201,6 @@ export class ConsumerService {
       return false;
     }
   }
-
 
   private async generateVideoWithBrowser(
     taskId: number,
@@ -197,7 +214,6 @@ export class ConsumerService {
       profileIndex,
     });
 
-    // 复用浏览器时，若不在目标页面才重新导航，避免重复加载拖慢速度
     if (!page.url().includes('/creative/creativestudio/image-to-video')) {
       await page.goto(this.configService.get<string>('CREATIVE_STUDIO_URL') ?? CREATIVE_STUDIO_URL);
       await page.waitForLoadState('networkidle');
@@ -207,10 +223,7 @@ export class ConsumerService {
       timeout: 15000,
     });
 
-    // 复用标签页时页面可能在顶部，chatbox 折叠导致 Upload 不可见，先滚到底并展开
     await ensureChatboxExpanded(page);
-
-    // 清空上一个任务残留的图片与提示词，再回填当前任务内容
     await clearCreativeStudioInputs(page);
 
     if (imagePaths?.length) {
@@ -230,11 +243,6 @@ export class ConsumerService {
     this.logger.log(`[worker-${profileIndex}] 任务 ${taskId} 已点击发送`);
   }
 
-  /**
-   * 把任务的参考图解析成 Playwright 可用的本地绝对路径。
-   * 资产存的是 auto-vi 的 HTTP 地址，这里直接走 HTTP 下载到本地临时目录，
-   * 不依赖 tk-auto 机器挂载 NAS 的 SMB 共享，避免「图片文件不存在 / 请求不到」。
-   */
   private async resolveImagePaths(
     imagePaths: string[],
     profileIndex: number,
@@ -249,7 +257,6 @@ export class ConsumerService {
 
     const localPaths: string[] = [];
     for (const raw of imagePaths) {
-      // 已经是本地可访问的文件（含已挂载的 UNC 路径），直接用
       if (existsSync(raw)) {
         localPaths.push(raw);
         continue;
@@ -266,7 +273,6 @@ export class ConsumerService {
     return localPaths;
   }
 
-  /** 通过 HTTP 下载图片到本地临时目录，返回保存后的绝对路径 */
   private async downloadImageToTmp(url: string, tmpDir: string): Promise<string> {
     const rawName =
       decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '') ||

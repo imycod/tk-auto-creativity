@@ -446,7 +446,11 @@ export async function submitCreativeStudioPrompt(page: Page): Promise<void> {
   );
 
   if ((await sendBtn.count()) > 0) {
-    await sendBtn.last().click();
+    const btn = sendBtn.last();
+    if (await btn.isDisabled()) {
+      throw new Error('SUBMIT_SLOT_FULL: browser concurrent limit reached, submit button disabled');
+    }
+    await btn.click();
     await page.waitForTimeout(500);
     return;
   }
