@@ -1,3 +1,5 @@
+详细参阅 docs
+
 ## Dev 开发
 
 先启动restful api server 服务
@@ -6,25 +8,30 @@
 // cd auto-vi
 npm run start:dev
 ```
+
 再启动 tk-auto 消费服务
+
 ```
 // cd tk-auto
 npm run start:dev
 ```
+
 最后去到 vi-admin
 
 ```
 // cd vi-admin
 npm run dev
 ```
+
 消费服务 tk-auto 可单独部署，在另一台机子上消费，2个轮询一个轮询是浏览器特定地址的自动化，第二个轮询是把生成好的视频下载到NAS里协议samba, 浏览器多开手动登录，程序会记录不同的profile根据profile下标分别消费生成视频任务，后续下载视频时根据profile下标找到该任务所在浏览器下载。
-<img width="1650" height="843" alt="img_v3_0213c_76457929-1c04-434e-a5b9-18ffe335c24g" src="https://github.com/user-attachments/assets/7dcd445e-0124-4923-af9b-446fa5dd2ae4" />
 
 
 ## Prod 正式
 
 ### Portainer
+
 #### Stack
+
 ```yaml
 version: "3"
 
@@ -68,15 +75,14 @@ volumes:
 ```
 
 本地 docker 构建镜像 然后 导出 在 导入到 Portainer Image
+
 ```
 ocker build --no-cache -t auto-vi .
 ocker build --no-cache -t vi-admin .
 docker save -o vi-system.tar vi-system:latest
 docker compose up -d --build 
 ```
+
 docker-compose.yaml 多个服务集合可使用最后compose构建， 前后端需要ng代理转发，需要在前端提供nginx然后一同构建进镜像
 
 找到Image进行镜像导入去到Stack 进入到相关的 Stack （vi-system） details  -> update the stack
-
-
-

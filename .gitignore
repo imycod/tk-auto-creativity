@@ -7,6 +7,8 @@ tk-auto.rar
 */**/*.rar
 */*.rar
 
+*.tar
+
 browser-profiles
 
 extensions
