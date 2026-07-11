@@ -1,5 +1,22 @@
 详细参阅 docs
 
+## 发布与部署
+
+```
+git fetch --tags
+git checkout v2.0.0
+```
+
+## Changelogs
+
+### v1.0.0
+
+完成基本功能，如：Consumer 自动打开目标网站，自动Prompt和Image回填，自动submit，Downloader自动下载目标视频到本地
+
+### v2.0.0 （release）
+
+增加Profile最大并发数，每个Profile同一时间轮询内最多消费3个任务，每个任务生成完毕并且下载完毕后，才能继续消费任务，根据status判断
+
 ## Dev 开发
 
 先启动restful api server 服务
@@ -25,12 +42,11 @@ npm run dev
 
 消费服务 tk-auto 可单独部署，在另一台机子上消费，2个轮询一个轮询是浏览器特定地址的自动化，第二个轮询是把生成好的视频下载到NAS里协议samba, 浏览器多开手动登录，程序会记录不同的profile根据profile下标分别消费生成视频任务，后续下载视频时根据profile下标找到该任务所在浏览器下载。
 
+### Docker
 
-## Prod 正式
+#### Portainer
 
-### Portainer
-
-#### Stack
+##### Stack
 
 ```yaml
 version: "3"
