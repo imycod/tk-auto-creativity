@@ -93,8 +93,8 @@ volumes:
 本地 docker 构建镜像 然后 导出 在 导入到 Portainer Image
 
 ```
-ocker build --no-cache -t auto-vi .
-ocker build --no-cache -t vi-admin .
+docker build --no-cache -t auto-vi .
+docker build --no-cache -t vi-admin .
 docker save -o vi-system.tar vi-system:latest
 docker compose up -d --build 
 ```
@@ -102,3 +102,22 @@ docker compose up -d --build
 docker-compose.yaml 多个服务集合可使用最后compose构建， 前后端需要ng代理转发，需要在前端提供nginx然后一同构建进镜像
 
 找到Image进行镜像导入去到Stack 进入到相关的 Stack （vi-system） details  -> update the stack
+
+
+
+## Changelogs:
+
+### v2.1.0
+
+新增duration，每个任务视频可选时间4-15s，优化任务prompt超长提示词限制解除，添加notice通知功能
+
+### v2.0.0
+
+每个profile 2min同时并发消费数限制3以内
+
+### v1.0.0
+
+基础功能可用，tk-core (任务消费者任务下载者)，auto-vi（restful api 服务提供者），vi-admin （管理面板）
+
+
+
