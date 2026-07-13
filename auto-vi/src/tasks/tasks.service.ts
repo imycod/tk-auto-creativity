@@ -36,6 +36,7 @@ export class TasksService {
         promptText: dto.promptText,
         productId: dto.productId,
         batchDate: dto.batchDate,
+        duration: dto.duration ?? 10,
         status: 'pending',
       });
       const taskId = task.taskId;

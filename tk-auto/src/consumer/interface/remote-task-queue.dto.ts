@@ -12,6 +12,7 @@ export interface RemoteTaskQueue {
   errorMessage?: string;
   task: {
     promptText: string;
+    duration?: number;
     assets: Array<{
       assetType: string;
       assetPath: string;

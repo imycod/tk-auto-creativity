@@ -19,6 +19,8 @@ CREATE TABLE tasks (
     product_id TEXT,
     batch_date DATE,
 
+    duration INTEGER NOT NULL DEFAULT 10 CHECK(duration >= 4 AND duration <= 15),
+
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP
 );

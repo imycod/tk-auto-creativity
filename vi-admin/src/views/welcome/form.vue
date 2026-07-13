@@ -18,7 +18,8 @@ const props = withDefaults(defineProps<FormProps>(), {
   formInline: () => ({
     promptText: "",
     imageList: [],
-    productId: "" 
+    productId: "",
+    duration: 10
   }),
   type: "add"
 });
@@ -104,9 +105,17 @@ defineExpose({ getRef });
         clearable
         placeholder="请输入提示词"
         :rows="4"
-        maxlength="1000"
-        show-word-limit
       />
+    </el-form-item>
+    <el-form-item label="视频时长" prop="duration">
+      <el-input-number
+        v-model="newFormInline.duration"
+        :min="4"
+        :max="15"
+        :step="1"
+        controls-position="right"
+      />
+      <span class="ml-2 text-gray-500">秒（4-15）</span>
     </el-form-item>
     <el-form-item label="文件" prop="imageList">
        <el-upload

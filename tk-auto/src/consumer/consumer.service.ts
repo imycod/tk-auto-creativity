@@ -12,6 +12,7 @@ import {
   clearCreativeStudioInputs,
   ensureChatboxExpanded,
   fillCreativeStudioPrompt,
+  setCreativeStudioDuration,
   submitCreativeStudioPrompt,
   uploadImagesToCreativeStudio,
 } from '../core/browser/creative-studio.helper';
@@ -134,6 +135,7 @@ export class ConsumerService {
         task.promptText,
         imagePaths,
         profileIndex,
+        task.duration,
       );
 
       await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
@@ -207,6 +209,7 @@ export class ConsumerService {
     promptText: string,
     imagePaths: string[] | undefined,
     profileIndex: number,
+    duration?: number,
   ): Promise<void> {
 
     const page = await this.browserService.createPage({
@@ -238,6 +241,12 @@ export class ConsumerService {
       await fillCreativeStudioPrompt(page, promptText);
       this.logger.log(`[worker-${profileIndex}] 任务 ${taskId} 已填入提示词`);
     }
+
+    const durationSeconds = duration ?? 15;
+    await setCreativeStudioDuration(page, durationSeconds);
+    this.logger.log(
+      `[worker-${profileIndex}] 任务 ${taskId} 已设置视频时长 ${durationSeconds}s`,
+    );
 
     await submitCreativeStudioPrompt(page);
     this.logger.log(`[worker-${profileIndex}] 任务 ${taskId} 已点击发送`);

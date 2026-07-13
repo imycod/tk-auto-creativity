@@ -40,6 +40,15 @@ export function useColumns() {
       )
     },
     {
+      label: "产品ID",
+      prop: "productId",
+      cellRenderer: ({ index, row }) => (
+        <div style="display: flex; align-items: center">
+          <span style="margin-left: 10px">{row.productId}</span>
+        </div>
+      )
+    },
+    {
       label: "提示词",
       width: 400,
       prop: "promptText",
@@ -71,21 +80,21 @@ export function useColumns() {
       )
     },
     {
+      label: "视频时长",
+      prop: "duration",
+      width: 100,
+      cellRenderer: ({ row }) => (
+        <span style="margin-left: 10px">{row.duration ?? 14}s</span>
+      )
+    },
+    {
       label: "状态",
       prop: "status",
       cellRenderer: ({ index, row }) => (
         <el-tag type={statusColorMap[row.status]}>{statusMap[row.status]}</el-tag>
       )
     },
-    {
-      label: "产品ID",
-      prop: "productId",
-      cellRenderer: ({ index, row }) => (
-        <div style="display: flex; align-items: center">
-          <span style="margin-left: 10px">{row.productId}</span>
-        </div>
-      )
-    },
+   
     {
       label: "批次日期",
       prop: "batchDate",

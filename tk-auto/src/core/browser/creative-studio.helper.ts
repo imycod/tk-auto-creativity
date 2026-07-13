@@ -434,6 +434,254 @@ async function promptFilled(
   return current.includes(expected);
 }
 
+const DURATION_BUTTON_SELECTOR = '[class*="chatbox-setting-btn"]';
+const DURATION_INNER_BUTTON_SELECTOR =
+  'button.button--sm[part="base"], button[part="base"]';
+// 新增：更精确的定位第三个 dropdown 中的 button
+const DURATION_DROPDOWN_SELECTOR = 'ks-dropdown-menu-1-1-1m, [data-inspector*="ks-dropdown-menu-1-1-1m"]';
+/**
+ * 在提交前设置 Creative Studio 的视频生成时长（秒）。
+ * 点击 chatbox 内的时长按钮（如 "14s"），在弹出的 ks-input-number 中填入目标值。
+ */
+export async function setCreativeStudioDuration(
+  page: Page,
+  durationSeconds: number,
+): Promise<void> {
+  const duration = Math.min(15, Math.max(4, Math.round(durationSeconds)));
+  await ensureChatboxExpanded(page);
+
+  const clicked = await clickThirdDurationSettingButton(page);
+  if (!clicked) {
+    throw new Error('未找到第3个视频时长设置按钮');
+  }
+
+  await page.waitForTimeout(400);
+  const filled = await fillDurationInput(page, duration);
+  if (!filled) {
+    throw new Error('未找到视频时长输入框');
+  }
+
+  await page.keyboard.press('Enter').catch(() => undefined);
+  await page.waitForTimeout(300);
+}
+
+/** 点击第三个 duration setting button */
+async function clickThirdDurationSettingButton(page: Page): Promise<boolean> {
+  const chatbox = page.locator('fieldset[data-chatbox-part="container"], .chatbox');
+  await chatbox.first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+
+  // 优先尝试通过 shadow DOM 精确找第3个
+  const clicked = await clickDurationButtonInShadow(page);
+  if (clicked) return true;
+
+  // 兜底：直接在页面上找所有按钮，点击第3个
+  const allButtons = page.locator(DURATION_BUTTON_SELECTOR);
+  const count = await allButtons.count();
+
+  if (count >= 3) {
+    await allButtons.nth(2).click({ force: true }); // 第3个（0-based index 2）
+    return true;
+  }
+
+  // 最后一个作为备选
+  if (count > 0) {
+    await allButtons.last().click({ force: true });
+    return true;
+  }
+
+  return false;
+}
+
+/** 通过 evaluate 遍历 shadow DOM 找第三个 ks-dropdown-menu 里的 button */
+async function clickDurationButtonInShadow(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    function walk(root: Document | ShadowRoot, results: Element[] = []): Element[] {
+      // 找所有 ks-dropdown-menu
+      const dropdowns = root.querySelectorAll('ks-dropdown-menu-1-1-1m, [class*="KsDropDownMenu"]');
+
+      for (const dropdown of dropdowns) {
+        const shadow = (dropdown as Element).shadowRoot;
+        if (!shadow) continue;
+
+        // 在每个 dropdown 里找 button
+        const btn = shadow.querySelector('button.button--sm[part="base"], button[part="base"], button.button--sm, button');
+        if (btn) results.push(btn as Element);
+      }
+
+      // 继续递归其他 shadow
+      for (const node of root.querySelectorAll('*')) {
+        const shadow = (node as Element).shadowRoot;
+        if (shadow) walk(shadow, results);
+      }
+
+      return results;
+    }
+
+    const chatbox = document.querySelector('fieldset[data-chatbox-part="container"]') || document;
+    const allButtons = walk(chatbox as Document | ShadowRoot);
+
+    // 优先取第三个
+    const targetBtn = allButtons[2] || allButtons[allButtons.length - 1];
+    if (targetBtn) {
+      (targetBtn as HTMLButtonElement).click();
+      return true;
+    }
+    return false;
+  });
+}
+
+/** 点击 chatbox 内的时长设置按钮（ks-button-* shadow 内的 button[part=base]） */
+async function clickDurationSettingButton(page: Page): Promise<boolean> {
+  const chatbox = page.locator(CHATBOX_CONTAINER_SELECTOR);
+  await chatbox.first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => undefined);
+  await chatbox.first().scrollIntoViewIfNeeded().catch(() => undefined);
+
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const host = chatbox.locator(DURATION_BUTTON_SELECTOR);
+    if ((await host.count()) > 0) {
+      const innerBtn = host.first().locator(DURATION_INNER_BUTTON_SELECTOR);
+      if ((await innerBtn.count()) > 0) {
+        await innerBtn.first().click({ force: true });
+        return true;
+      }
+      await host.first().click({ force: true });
+      return true;
+    }
+
+    const clicked = await clickDurationSettingButtonInShadow(page);
+    if (clicked) {
+      return true;
+    }
+
+    await page.waitForTimeout(300);
+  }
+
+  return false;
+}
+
+/** 递归遍历 open shadow DOM，定位时长按钮并点击内部 button */
+async function clickDurationSettingButtonInShadow(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    function isKsButtonTag(tagName: string): boolean {
+      return /^ks-button/i.test(tagName);
+    }
+
+    function matchesDurationHost(el: Element): boolean {
+      const className = typeof el.className === 'string' ? el.className : '';
+      const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+      return (
+        className.includes('chatbox-setting-btn') ||
+        (isKsButtonTag(el.tagName) && /\d+\s*s\b/i.test(text))
+      );
+    }
+
+    function clickInnerButton(host: Element): boolean {
+      if (!host.shadowRoot) return false;
+      const root = host.shadowRoot;
+      const btn =
+        root.querySelector('button.button--sm[part="base"]') ??
+        root.querySelector('button[part="base"]') ??
+        root.querySelector('button.button--sm') ??
+        root.querySelector('button');
+      if (btn instanceof HTMLButtonElement) {
+        btn.click();
+        return true;
+      }
+      return false;
+    }
+
+    function walk(root: Document | ShadowRoot): Element | null {
+      for (const el of root.querySelectorAll('*')) {
+        if (matchesDurationHost(el)) {
+          return el;
+        }
+      }
+      for (const node of root.querySelectorAll('*')) {
+        const shadow = (node as Element).shadowRoot;
+        if (shadow) {
+          const found = walk(shadow);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+
+    const chatbox = document.querySelector(
+      'fieldset[data-chatbox-part="container"]',
+    );
+    const searchRoot = (chatbox ?? document) as Document | ShadowRoot;
+    const target = walk(searchRoot);
+    if (!target) return false;
+    return clickInnerButton(target);
+  });
+}
+
+/** 在弹出的 ks-input-number 中填入时长 */
+async function fillDurationInput(page: Page, duration: number): Promise<boolean> {
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    const filled = await page.evaluate((durationValue) => {
+      function isKsInputNumberHost(el: Element): boolean {
+        return /^ks-input-number/i.test(el.tagName);
+      }
+
+      function walk(root: Document | ShadowRoot): HTMLInputElement | null {
+        const inputs = root.querySelectorAll(
+          'input[placeholder="Duration"], input.input[type="text"], input[part="input"]',
+        );
+        for (const el of inputs) {
+          const placeholder = el.getAttribute('placeholder') ?? '';
+          let parent: Element | null = el;
+          let inNumber = false;
+          while (parent) {
+            if (isKsInputNumberHost(parent)) {
+              inNumber = true;
+              break;
+            }
+            parent = parent.parentElement;
+          }
+          if (placeholder === 'Duration' || inNumber) {
+            return el as HTMLInputElement;
+          }
+        }
+        for (const node of root.querySelectorAll('*')) {
+          const shadow = (node as Element).shadowRoot;
+          if (shadow) {
+            const found = walk(shadow);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
+
+      const input = walk(document);
+      if (!input) return false;
+
+      input.focus();
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      const value = String(durationValue);
+      if (setter) {
+        setter.call(input, value);
+      } else {
+        input.value = value;
+      }
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }, duration);
+
+    if (filled) {
+      return true;
+    }
+    await page.waitForTimeout(200);
+  }
+  return false;
+}
+
 /**
  * 点击发送按钮提交（主色 icon-only 按钮），或在输入框按 Enter 兜底。
  */

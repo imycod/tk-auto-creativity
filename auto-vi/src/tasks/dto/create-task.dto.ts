@@ -1,4 +1,14 @@
-import { IsArray, IsDateString, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsDateString,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class CreateTaskDto {
   @IsString()
@@ -18,4 +28,12 @@ export class CreateTaskDto {
   @IsOptional()
   @IsDateString()
   batchDate?: string;
+
+  /** 生成视频时长（秒），4-15，默认 10 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(4)
+  @Max(15)
+  duration?: number;
 }

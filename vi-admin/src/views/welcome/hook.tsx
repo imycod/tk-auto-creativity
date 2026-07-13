@@ -72,7 +72,8 @@ export function useTask() {
           status: row?.status ?? "",
           imageList: imageList,
           productId: row?.productId ?? "",
-          promptText: row?.promptText ?? ""
+          promptText: row?.promptText ?? "",
+          duration: row?.duration ?? 10
         }
       },
       width: "40%",
@@ -97,6 +98,7 @@ export function useTask() {
             const reqData = {
               productId: curData.productId,
               promptText: curData.promptText,
+              duration: curData.duration,
               imageList: curData.imageList.map(item => {
                 if (item && item?.response && item?.response?.data) {
                   return item?.response?.data?.urls[0];

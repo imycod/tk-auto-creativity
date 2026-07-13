@@ -39,6 +39,10 @@ export class Task {
   @Column({ name: 'batch_date', type: 'date', nullable: true })
   batchDate?: string;
 
+  /** 生成视频时长（秒），范围 4-15 */
+  @Column({ type: 'integer', default: 10 })
+  duration!: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 
