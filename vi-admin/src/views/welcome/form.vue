@@ -51,6 +51,7 @@ const handleRemove = (file: UploadFile) => {
   if (index !== -1) {
     newFormInline.value.imageList.splice(index, 1);
   }
+  ruleFormRef.value?.validateField("imageList").catch(() => undefined);
 };
 
 /** 上传文件前校验 */
@@ -79,6 +80,7 @@ const handleUploadSuccess = (response: any, file: UploadFile) => {
     message('上传响应异常', { type: 'error' });
     return;
   }
+  ruleFormRef.value?.validateField("imageList").catch(() => undefined);
 };
 
 defineExpose({ getRef });
