@@ -72,7 +72,7 @@ export class TasksService {
   }
 
   async findAll(dto: FindAllTaskDto): Promise<{ list: Task[], total: number, currentPage: number, pageSize: number }> {
-    const { taskId, status, productId, currentPage = 1, pageSize = 10 } = dto;
+    const { taskId, status, productId, updatedSince, currentPage = 1, pageSize = 10 } = dto;
 
     const query = this.tasksRepository.createQueryBuilder('task');
     // 需要把asset也查询出来
@@ -86,13 +86,16 @@ export class TasksService {
     if (status) {
       query.andWhere('task.status = :status', { status });
     }
+    if (updatedSince) {
+      query.andWhere('task.updatedAt >= :updatedSince', { updatedSince });
+    }
 
     // 计算总数
     const total = await query.getCount();
 
     // 分页查询（按创建时间倒序，列表顺序稳定）
     const list = await query
-      .orderBy('task.createdAt', 'DESC')
+      .orderBy(updatedSince ? 'task.updatedAt' : 'task.createdAt', 'DESC')
       .skip((currentPage - 1) * pageSize)
       .take(pageSize)
       .getMany();

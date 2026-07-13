@@ -45,7 +45,7 @@ const {
       <!-- 全屏 -->
       <LaySidebarFullScreen id="full-screen" />
       <!-- 消息通知 -->
-      <LayNotice v-if="false" id="header-notice" />
+      <LayNotice id="header-notice" />
       <!-- 退出登录 -->
       <el-dropdown v-if="false" trigger="click">
         <span class="el-dropdown-link navbar-bg-hover select-none">

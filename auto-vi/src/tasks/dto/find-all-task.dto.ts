@@ -1,4 +1,4 @@
-import { IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export enum TaskStatus {
@@ -22,6 +22,11 @@ export class FindAllTaskDto {
   @Transform(({ value }) => (value === '' || value === null) ? undefined : value)
   @IsEnum(TaskStatus)
   status?: TaskStatus;
+
+  /** 仅返回 updatedAt >= 该时间的任务（用于通知轮询） */
+  @IsOptional()
+  @IsDateString()
+  updatedSince?: string;
 
   // 新增分页参数
   @IsOptional()
