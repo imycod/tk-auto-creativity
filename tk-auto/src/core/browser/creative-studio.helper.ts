@@ -682,10 +682,96 @@ async function fillDurationInput(page: Page, duration: number): Promise<boolean>
   return false;
 }
 
+/** 页面积分不足以完成本次视频生成。 */
+export class InsufficientCreditsError extends Error {
+  constructor(
+    message: string,
+    public readonly credits: number,
+    public readonly required: number,
+  ) {
+    super(message);
+    this.name = 'InsufficientCreditsError';
+  }
+}
+
+/**
+ * 读取页面右上角/操作区 coin 按钮旁的当前积分。
+ * DOM：ks-icon[name="coin"] + 相邻 span.tiktok-labelMd（如 1980）
+ */
+export async function readCreativeStudioCredits(page: Page): Promise<number | null> {
+  return page
+    .evaluate(() => {
+      const deepFindCoinButtons = (
+        root: Document | ShadowRoot,
+      ): number | null => {
+        const icons = root.querySelectorAll(
+          'ks-icon[name="coin"], [name="coin"]',
+        );
+        for (const icon of icons) {
+          const host =
+            icon.closest('ks-button-1-1-1m, button, [class*="operation-btn"]') ??
+            icon.parentElement;
+          const span =
+            host?.querySelector('span.tiktok-labelMd, span') ??
+            icon.nextElementSibling;
+          const raw = (span?.textContent ?? '').replace(/[,\s]/g, '').trim();
+          const n = Number(raw);
+          if (Number.isFinite(n) && n >= 0) return n;
+        }
+        for (const el of root.querySelectorAll('*')) {
+          const shadow = (el as Element).shadowRoot;
+          if (!shadow) continue;
+          const found = deepFindCoinButtons(shadow);
+          if (found != null) return found;
+        }
+        return null;
+      };
+      return deepFindCoinButtons(document);
+    })
+    .catch(() => null);
+}
+
+/**
+ * 提交前校验积分：当前积分必须 >= duration（生成所需点数）。
+ * 不够则抛出 InsufficientCreditsError，由调用方写入 errorMessage。
+ */
+export async function assertEnoughCreditsForDuration(
+  page: Page,
+  durationSeconds: number,
+): Promise<number> {
+  const required = Math.min(15, Math.max(4, Math.round(durationSeconds)));
+  const credits = await readCreativeStudioCredits(page);
+  if (credits == null) {
+    throw new Error('无法读取当前积分，取消提交');
+  }
+  if (credits < required) {
+    throw new InsufficientCreditsError(
+      `积分不够：当前 ${credits}，生成 ${required}s 视频至少需要 ${required}`,
+      credits,
+      required,
+    );
+  }
+  return credits;
+}
+
 /**
  * 点击发送按钮提交（主色 icon-only 按钮），或在输入框按 Enter 兜底。
+ * 提交前若有 Downloads 悬浮窗遮挡：先回调给调用方写回错误，再关闭悬浮窗，最后点击发送。
  */
-export async function submitCreativeStudioPrompt(page: Page): Promise<void> {
+export async function submitCreativeStudioPrompt(
+  page: Page,
+  onDownloadsFailures?: (
+    failures: DownloadsManagerFailure[],
+  ) => Promise<void>,
+): Promise<void> {
+  const leftoverFailures = await readDownloadsManagerFailures(page);
+  if (leftoverFailures.length > 0 && onDownloadsFailures) {
+    await onDownloadsFailures(leftoverFailures);
+  }
+  // 无论是否有失败项，有悬浮窗就关，避免挡住发送按钮
+  await closeDownloadsManager(page);
+  await page.waitForTimeout(300).catch(() => undefined);
+
   await ensureChatboxExpanded(page);
 
   const chatbox = page.locator('fieldset[data-chatbox-part="container"]');
@@ -818,13 +904,33 @@ export interface DownloadResult {
   promptText: string;
 }
 
+/** TikTok Downloads 悬浮窗报告的、已确认的下载失败。 */
+export class DownloadFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DownloadFailedError';
+  }
+}
+
+/** 页面视频块上已展示生成失败（含 Task ID / Error code）。 */
+export class GenerationFailedError extends Error {
+  constructor(
+    message: string,
+    public readonly generationTaskId?: string,
+    public readonly errorCode?: string,
+  ) {
+    super(message);
+    this.name = 'GenerationFailedError';
+  }
+}
+
 /** 归一化 promptText：去掉首尾空白并把连续空白折叠成单个空格，便于匹配 */
 function normalizePrompt(text: string): string {
   return (text ?? '').replace(/\s+/g, ' ').trim();
 }
 
 /** 判断页面卡片上的 promptText 是否与任务的 promptText 对应 */
-function promptMatches(cardPrompt: string, taskPrompt: string): boolean {
+export function promptMatches(cardPrompt: string, taskPrompt: string): boolean {
   const a = normalizePrompt(cardPrompt);
   const b = normalizePrompt(taskPrompt);
   if (!a || !b) return false;
@@ -853,10 +959,119 @@ async function extractCardPrompt(card: Locator): Promise<string> {
 }
 
 /**
+ * 从失败卡片中读取 Task ID / Error code。
+ * DOM：div.tiktok-labelSm > span "Task ID: …" + span "Error code: …"
+ */
+async function extractCardErrorMeta(
+  card: Locator,
+): Promise<{ generationTaskId?: string; errorCode?: string } | null> {
+  return card
+    .evaluate((cardEl) => {
+      let generationTaskId: string | undefined;
+      let errorCode: string | undefined;
+
+      for (const span of cardEl.querySelectorAll('span')) {
+        const text = (span.textContent ?? '').trim();
+        const taskMatch = text.match(/^Task ID:\s*(.+)$/i);
+        if (taskMatch) generationTaskId = taskMatch[1].trim();
+        const codeMatch = text.match(/^Error code:\s*(.+)$/i);
+        if (codeMatch) errorCode = codeMatch[1].trim();
+      }
+
+      if (!generationTaskId && !errorCode) return null;
+      return { generationTaskId, errorCode };
+    })
+    .catch(() => null);
+}
+
+/**
+ * 从失败卡片中读取可读报错详情（Community Guidelines 等）。
+ * DOM：与 Task ID 行同级的前一个兄弟，如
+ *   div.tiktok-bodySm — "This content may violate our Community Guidelines..."
+ *   div.tiktok-labelSm — Task ID / Error code
+ */
+async function extractCardErrorDetail(card: Locator): Promise<string> {
+  return card
+    .evaluate((cardEl) => {
+      const textOf = (node: Element | null | undefined) =>
+        (node?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+      // 以真正的 Task ID span 定位元信息行（避免命中外层父 div）
+      const taskSpan = [...cardEl.querySelectorAll('span')].find((s) =>
+        /^Task ID:\s*/i.test((s.textContent ?? '').trim()),
+      );
+      const metaRow = taskSpan?.parentElement;
+      if (metaRow) {
+        const fromSibling = textOf(metaRow.previousElementSibling);
+        if (fromSibling && !/^Task ID:/i.test(fromSibling)) {
+          return fromSibling;
+        }
+      }
+
+      // 兜底：卡片内 body 文案节点
+      const body =
+        cardEl.querySelector('.tiktok-bodySm, [class*="bodySm"]') ??
+        cardEl.querySelector('.whitespace-normal.break-words');
+      return textOf(body);
+    })
+    .catch(() => '');
+}
+
+/**
+ * 组合详情文案 + Task ID / Error code，形成入库用的完整错误信息。
+ * 另处理 Preview unavailable（网络导致无预览/无下载按钮）。
+ */
+async function extractCardGenerationError(
+  card: Locator,
+): Promise<{
+  message: string;
+  detail?: string;
+  generationTaskId?: string;
+  errorCode?: string;
+} | null> {
+  // 网络/预览不可用
+  const preview = await card
+    .evaluate((cardEl) => {
+      const textOf = (node: Element | null | undefined) =>
+        (node?.textContent ?? '').replace(/\s+/g, ' ').trim();
+      const previewTitle = [...cardEl.querySelectorAll('p')].find((p) =>
+        /preview unavailable/i.test(p.textContent ?? ''),
+      );
+      if (!previewTitle) return null;
+      const detail =
+        textOf(previewTitle.nextElementSibling as Element | null) ||
+        'Check your network connection and try again.';
+      return { detail, message: `Preview unavailable | ${detail}` };
+    })
+    .catch(() => null);
+
+  if (preview) return preview;
+
+  const meta = await extractCardErrorMeta(card);
+  if (!meta) return null;
+
+  const detail = await extractCardErrorDetail(card);
+  const parts = [
+    detail,
+    meta.generationTaskId ? `Task ID: ${meta.generationTaskId}` : '',
+    meta.errorCode ? `Error code: ${meta.errorCode}` : '',
+  ].filter(Boolean);
+
+  return {
+    message: parts.join(' | ') || 'Video generation failed',
+    detail: detail || undefined,
+    generationTaskId: meta.generationTaskId,
+    errorCode: meta.errorCode,
+  };
+}
+
+/**
  * 遍历最外层容器里的所有视频块，找到 promptText 与任务匹配且「已生成完成」的块，
  * 深层展开（含 open shadow DOM）把 opacity-0 的悬浮控制栏改为 opacity-100，
  * 找到下载按钮（ks-icon[name="download"] 所在 button），点击并捕获浏览器下载，另存为 savePath。
  *
+ * 若匹配块上已出现生成失败（Task ID / Error code）或预览不可用（Preview unavailable），
+ * 抛出 GenerationFailedError。
  * 返回 null 的情况：没有匹配 promptText 的块，或匹配的块尚未生成完成（无下载按钮）。
  */
 export async function downloadVideoByPrompt(
@@ -877,6 +1092,16 @@ export async function downloadVideoByPrompt(
 
     await card.scrollIntoViewIfNeeded().catch(() => undefined);
 
+    // 生成/预览失败：违规 Error code，或 Preview unavailable（网络导致无下载按钮）
+    const generationError = await extractCardGenerationError(card);
+    if (generationError) {
+      throw new GenerationFailedError(
+        generationError.message,
+        generationError.generationTaskId,
+        generationError.errorCode,
+      );
+    }
+
     // 第一步：展开悬浮控制栏并检测下载按钮是否存在（生成完成才会出现）
     const ready = await revealAndDetectDownload(card);
     if (!ready) {
@@ -891,12 +1116,171 @@ export async function downloadVideoByPrompt(
       continue;
     }
 
-    const download = await downloadPromise;
+    const download = await Promise.race([
+      downloadPromise,
+      waitForDownloadFailure(page),
+    ]);
     await download.saveAs(savePath);
     return { filePath: savePath, promptText: cardPrompt };
   }
 
   return null;
+}
+
+/**
+ * 等待 TikTok 的 Downloads 悬浮窗出现失败项，并读取其标题和错误文案。
+ * 不在这里关闭窗口，确保调用方先将错误回写到任务队列后再关闭。
+ */
+async function waitForDownloadFailure(page: Page): Promise<never> {
+  await page.waitForFunction(
+    () => {
+      const root = document.querySelector('[class*="video-download-manager"]');
+      if (!root) return false;
+      return /download\s*failed|\(\s*\d+\s*failed\s*\)/i.test(
+        root.textContent ?? '',
+      );
+    },
+    undefined,
+    { timeout: 120000 },
+  );
+
+  const failures = await readDownloadsManagerFailures(page);
+  const first = failures[0];
+  const message = first
+    ? `${first.title}: ${first.status}`
+    : 'TikTok Downloads 显示 Download failed';
+
+  throw new DownloadFailedError(message);
+}
+
+export interface DownloadsManagerFailure {
+  /** 悬浮窗条目标题（通常是卡片 prompt 截断文案） */
+  title: string;
+  /** 状态文案，如 Download failed */
+  status: string;
+}
+
+/**
+ * 读取 Downloads 悬浮窗里的失败项（不关闭窗口）。
+ * 标题栏形如 "Downloads (2 failed)"；条目上有 truncate 标题 + Download failed。
+ */
+export async function readDownloadsManagerFailures(
+  page: Page,
+): Promise<DownloadsManagerFailure[]> {
+  return page
+    .evaluate(() => {
+      const findManager = (): HTMLElement | null => {
+        const action = document.querySelector(
+          '.video-download-manager-action, [class*="video-download-manager"]',
+        );
+        if (action) {
+          return (
+            action.closest<HTMLElement>('[class*="video-download-manager"]') ??
+            (action as HTMLElement)
+          );
+        }
+        const header = [...document.querySelectorAll('div')].find((el) => {
+          const t = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+          return /^Downloads?\b/i.test(t) && t.length < 40;
+        });
+        return (
+          header?.closest<HTMLElement>('[class*="video-download-manager"]') ??
+          header?.parentElement ??
+          null
+        );
+      };
+
+      const manager = findManager();
+      if (!manager) return [];
+
+      const out: { title: string; status: string }[] = [];
+      const seen = new Set<string>();
+
+      const titleNodes = [
+        ...manager.querySelectorAll<HTMLElement>('[class*="truncate-wrapper"]'),
+      ];
+      for (const titleNode of titleNodes) {
+        const title = (titleNode.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (!title || /^Downloads?\b/i.test(title)) continue;
+
+        const row =
+          titleNode.closest<HTMLElement>('li, [role="listitem"], div') ??
+          titleNode.parentElement;
+        const rowText = row?.textContent ?? '';
+        if (!/download\s*failed/i.test(rowText)) continue;
+
+        const status =
+          [...(row?.querySelectorAll('span') ?? [])]
+            .map((s) => s.textContent?.trim() ?? '')
+            .find((t) => /download\s*failed/i.test(t)) ?? 'Download failed';
+
+        const key = `${title}||${status}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ title, status });
+      }
+
+      if (
+        out.length === 0 &&
+        /\(\s*\d+\s*failed\s*\)|download\s*failed/i.test(
+          manager.textContent ?? '',
+        )
+      ) {
+        out.push({ title: '(unknown)', status: 'Download failed' });
+      }
+
+      return out;
+    })
+    .catch(() => []);
+}
+
+/**
+ * 关闭 TikTok 的 Downloads 悬浮窗（成功/失败态都关，避免遮挡提交按钮）。
+ * 优先点 .video-download-manager-action 里的 close 图标。
+ */
+export async function closeDownloadsManager(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const closeIcon =
+      document.querySelector<HTMLElement>(
+        '.video-download-manager-action ks-icon[name="close"]',
+      ) ??
+      document.querySelector<HTMLElement>(
+        '[class*="video-download-manager"] ks-icon[name="close"]',
+      );
+
+    if (!closeIcon) {
+      // 兜底：找到 "Downloads" 标题附近的 close
+      const header = [...document.querySelectorAll('div')].find((el) =>
+        /^Downloads?\b/i.test((el.textContent ?? '').trim()),
+      );
+      const root =
+        header?.closest<HTMLElement>('[class*="video-download-manager"]') ??
+        header?.parentElement;
+      const icon = root?.querySelector<HTMLElement>('ks-icon[name="close"]');
+      if (!icon) return false;
+      (icon.closest('ks-button-1-1-1m, button') as HTMLElement | null)?.click();
+      return true;
+    }
+
+    (closeIcon.closest('ks-button-1-1-1m, button') as HTMLElement | null)?.click();
+    return true;
+  });
+}
+
+/**
+ * 先读取 Downloads 悬浮窗失败项，再关闭窗口。
+ * 调用方应先把失败与任务关联写回 errorMessage，再调用本函数；
+ * 或使用本函数的返回值再写回（本函数已关闭窗口）。
+ */
+export async function drainDownloadsManager(
+  page: Page,
+): Promise<DownloadsManagerFailure[]> {
+  const failures = await readDownloadsManagerFailures(page);
+  const closed = await closeDownloadsManager(page);
+  if (closed || failures.length > 0) {
+    await page.waitForTimeout(300).catch(() => undefined);
+  }
+  return failures;
 }
 
 /** 展开视频块里的悬浮控制栏并判断是否存在下载按钮 */

@@ -4,7 +4,12 @@ import { Interval } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { join, win32 } from 'path';
 import { existsSync, mkdirSync } from 'fs';
-import { downloadVideoByPrompt } from '../core/browser/creative-studio.helper';
+import {
+  closeDownloadsManager,
+  DownloadFailedError,
+  downloadVideoByPrompt,
+  GenerationFailedError,
+} from '../core/browser/creative-studio.helper';
 import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { TaskQueue } from 'src/interface/task-queue';
@@ -204,8 +209,41 @@ export class DownloaderService {
         `[downloader-${profileIndex}] 任务 ${taskId} 下载完成: ${result.filePath}`,
       );
     } catch (error) {
+      const message = (error as Error).message;
+      const shouldReportFailure =
+        error instanceof DownloadFailedError ||
+        error instanceof GenerationFailedError;
+
+      if (shouldReportFailure) {
+        try {
+          await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
+            status: 'failed',
+            stage: 'postprocess',
+            errorMessage: message,
+            completedAt: new Date().toISOString(),
+          }));
+          await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
+            status: 'failed',
+          }));
+        } catch (reportError) {
+          this.logger.error(
+            `[downloader-${profileIndex}] 任务 ${taskId} 错误回写失败: ${(reportError as Error).message}`,
+          );
+        }
+
+        if (error instanceof DownloadFailedError) {
+          await closeDownloadsManager(page).catch((closeError) => {
+            this.logger.warn(
+              `[downloader-${profileIndex}] 关闭 Downloads 悬浮窗失败: ${(closeError as Error).message}`,
+            );
+          });
+        }
+      }
+
+      const kind =
+        error instanceof GenerationFailedError ? '生成失败' : '下载失败';
       this.logger.error(
-        `[downloader-${profileIndex}] 任务 ${taskId} 下载失败: ${(error as Error).message}`,
+        `[downloader-${profileIndex}] 任务 ${taskId} ${kind}: ${message}`,
       );
     }
 

@@ -9,16 +9,20 @@ services:
     container_name: auto-vi
     restart: unless-stopped
     ports:
-      - "3010:3000"   # 左边是NAS端口，右边是容器内端口
+      - "3000:3000"   # 左边是NAS端口，右边是容器内端口
     environment:
       - NODE_ENV=development
-      - PORT=3010
+      - PORT=3000
       - PUBLIC_BASE_URL=http://192.168.50.100:9444/api  
       - UPLOAD_DIR=/app/uploads/images
       
     volumes:
       - ./uploads:/app/uploads  # 本地开发测试当前docker-compose所在目录 上传文件持久化
       - ./data:/app/data      # 本地开发测试当前docker-compose所在目录 数据持久化
+      # - /volume1/docker/vi-system/uploads:/app/uploads  # 生产环境 上传文件持久化
+      # - /volume1/docker/vi-system/data:/app/data        # 生产环境 数据持久化
+      # - vi-system-uploads:/app/uploads
+      # - vi-system-data:/app/data
 
   # 前端 Vue
   vi-admin:

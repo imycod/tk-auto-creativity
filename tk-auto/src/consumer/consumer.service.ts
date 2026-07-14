@@ -9,9 +9,13 @@ import { basename, join } from 'path';
 
 import { BrowserService } from '../core/browser/browser.service';
 import {
+  assertEnoughCreditsForDuration,
   clearCreativeStudioInputs,
+  DownloadsManagerFailure,
   ensureChatboxExpanded,
   fillCreativeStudioPrompt,
+  InsufficientCreditsError,
+  promptMatches,
   setCreativeStudioDuration,
   submitCreativeStudioPrompt,
   uploadImagesToCreativeStudio,
@@ -176,6 +180,30 @@ export class ConsumerService {
         return false;
       }
 
+      // 积分不足：直接失败写入 errorMessage，重试无意义
+      if (error instanceof InsufficientCreditsError) {
+        try {
+          await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
+            status: 'failed',
+            stage: 'rendering',
+            profileIndex,
+            errorMessage: message,
+            completedAt: new Date().toISOString(),
+          }));
+          await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
+            status: 'failed',
+          }));
+        } catch (reportError) {
+          this.logger.error(
+            `[worker-${profileIndex}] 任务 ${taskId} 积分不足回写失败: ${(reportError as Error).message}`,
+          );
+        }
+        this.logger.error(
+          `[worker-${profileIndex}] 任务 ${taskId} ${message}`,
+        );
+        return false;
+      }
+
       const isFinalFailure = queueItem.retryCount >= 2;
 
       try {
@@ -248,8 +276,80 @@ export class ConsumerService {
       `[worker-${profileIndex}] 任务 ${taskId} 已设置视频时长 ${durationSeconds}s`,
     );
 
-    await submitCreativeStudioPrompt(page);
+    const credits = await assertEnoughCreditsForDuration(page, durationSeconds);
+  
+    this.logger.log(
+      `[worker-${profileIndex}] 任务 ${taskId} 积分校验通过：当前 ${credits}`,
+    );
+
+    // 提交前：写回 Downloads 失败 → 关闭悬浮窗 → 再点发送
+    await submitCreativeStudioPrompt(page, (failures) =>
+      this.reportDownloadsManagerFailures(failures, profileIndex),
+    );
     this.logger.log(`[worker-${profileIndex}] 任务 ${taskId} 已点击发送`);
+  }
+
+  /**
+   * 将 Downloads 悬浮窗失败项按 title≈promptText 关联到 submitted 队列任务并写回 errorMessage。
+   */
+  private async reportDownloadsManagerFailures(
+    failures: DownloadsManagerFailure[],
+    profileIndex: number,
+  ): Promise<void> {
+    try {
+      const { data: response } = await firstValueFrom(
+        this.httpService.post(`${this.autoViApiUrl}/api/tasks-queue/submitted`),
+      );
+      const submitted = (response.data ?? []) as Array<{
+        queueId: number;
+        taskId: number;
+        profileIndex?: number;
+        task?: { promptText?: string };
+      }>;
+
+      const candidates = submitted.filter(
+        (item) => (item.profileIndex ?? 0) === profileIndex,
+      );
+
+      for (const failure of failures) {
+        const message = `${failure.title}: ${failure.status}`;
+        const matched = candidates.find((item) =>
+          promptMatches(failure.title, item.task?.promptText ?? ''),
+        );
+
+        if (!matched) {
+          this.logger.warn(
+            `[worker-${profileIndex}] Downloads 失败未匹配到任务: ${message}`,
+          );
+          continue;
+        }
+
+        await firstValueFrom(
+          this.httpService.patch(
+            `${this.autoViApiUrl}/api/tasks-queue/${matched.queueId}`,
+            {
+              status: 'failed',
+              stage: 'postprocess',
+              errorMessage: message,
+              completedAt: new Date().toISOString(),
+            },
+          ),
+        );
+        await firstValueFrom(
+          this.httpService.post(
+            `${this.autoViApiUrl}/api/tasks/update/${matched.taskId}`,
+            { status: 'failed' },
+          ),
+        );
+        this.logger.error(
+          `[worker-${profileIndex}] 任务 ${matched.taskId} 下载失败已回写: ${message}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `[worker-${profileIndex}] Downloads 失败回写异常: ${(error as Error).message}`,
+      );
+    }
   }
 
   private async resolveImagePaths(

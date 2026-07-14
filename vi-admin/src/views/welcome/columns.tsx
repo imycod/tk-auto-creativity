@@ -42,6 +42,7 @@ export function useColumns() {
     {
       label: "产品ID",
       prop: "productId",
+      width: 150,
       cellRenderer: ({ index, row }) => (
         <div style="display: flex; align-items: center">
           <span style="margin-left: 10px">{row.productId}</span>
@@ -56,7 +57,7 @@ export function useColumns() {
       cellRenderer: ({ index, row }) => (
         <div style="width: 400px;">
           <iconify-icon-online icon="ep:prompt" />
-          <span style="margin-left: 10px" class="line-clamp-1" onClick={() => handlePromptText(index + 1, row)}>{row.promptText}</span>
+          <span style="margin-left: 10px" class="line-clamp-1 pointer cursor-pointer" onClick={() => handlePromptText(index + 1, row)}>{row.promptText}</span>
         </div>
       )
     },
@@ -97,6 +98,7 @@ export function useColumns() {
    
     {
       label: "批次日期",
+      width: 150,
       prop: "batchDate",
       cellRenderer: ({ index, row }) => (
         <div style="display: flex; align-items: center">
@@ -106,6 +108,7 @@ export function useColumns() {
     },
     {
       label: "创建时间",
+      width: 150,
       prop: "createdAt",
       formatter: (row, _column, cellValue) =>
         cellValue
@@ -117,6 +120,7 @@ export function useColumns() {
     {
       label: "更新时间",
       prop: "updatedAt",
+      width: 150,
       formatter: (row, _column, cellValue) =>
         cellValue
           ? dayjs(cellValue).format("YYYY-MM-DD HH:mm:ss")
@@ -127,6 +131,7 @@ export function useColumns() {
     {
       label: "操作",
       width: 300,
+      fixed: "right",
       slot: "operation"
       // cellRenderer: ({ index, row }) => (
       //   <>
