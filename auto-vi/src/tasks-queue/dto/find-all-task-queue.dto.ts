@@ -7,6 +7,7 @@ export enum QueueStatus {
     COMPLETED = 'completed',
     FAILED = 'failed',
     RETRYING = 'retrying',
+    SUBMITTED = 'submitted',
 }
 
 export enum QueueStage {
