@@ -62,7 +62,11 @@ export class TasksQueueService {
       query.andWhere('taskQueue.stage = :stage', { stage });
     }
     const total = await query.getCount();
-    const list = await query.skip((currentPage - 1) * pageSize).take(pageSize).getMany();
+    const list = await query
+      .orderBy('taskQueue.createdAt', 'ASC')
+      .skip((currentPage - 1) * pageSize)
+      .take(pageSize)
+      .getMany();
     return { list, total, currentPage, pageSize };
   }
 

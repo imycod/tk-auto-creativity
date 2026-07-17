@@ -10,7 +10,7 @@ export function useQueued() {
     taskId: "",
     queueId: "",
     stage: "",
-    status: "",
+    status: "failed",
   })
   const loading = ref(true);
   const dataList = ref([]);

@@ -32,6 +32,7 @@ export class AssetsService {
     const total = await query.getCount();
     // 分页查询
     const list = await query
+      .orderBy('taskAsset.createdAt', 'DESC')
       .skip((currentPage - 1) * pageSize)
       .take(pageSize)
       .getMany();

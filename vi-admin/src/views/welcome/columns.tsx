@@ -64,6 +64,7 @@ export function useColumns() {
     {
       label: "图像",
       prop: "assets",
+      width: 400,
       cellRenderer: ({ index, row }) => (
         <div style="display: flex; align-items: center">
           {row.assets.map(item => (
