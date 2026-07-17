@@ -23,6 +23,10 @@ export class UpdateTaskQueueDto {
   errorMessage?: string;
 
   @IsOptional()
+  @IsString()
+  excludedWorkers?: string | null;
+
+  @IsOptional()
   @IsNumber()
   retryCount?: number;
 

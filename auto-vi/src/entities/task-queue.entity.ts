@@ -62,6 +62,13 @@ export class TaskQueue {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage?: string;
 
+  /**
+   * 已被调度器排除的 worker profile 列表（JSON 数组，如 "[0,1]"）。
+   * 这些 profile 因登录失败/积分不足等连续失败后不再领取本任务。
+   */
+  @Column({ name: 'excluded_workers', type: 'text', nullable: true })
+  excludedWorkers?: string;
+
   @Column({ name: 'started_at', type: 'datetime', nullable: true })
   startedAt?: Date;
 

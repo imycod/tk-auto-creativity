@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Task } from 'src/entities/task.entity';
 import { UpdateTaskQueueDto } from './dto/update-task-queue.dto';
+import { ReassignTaskQueueDto } from './dto/reassign-task-queue.dto';
 
 @Injectable()
 export class TasksQueueService {
@@ -23,6 +24,20 @@ export class TasksQueueService {
     );
     this.maxConcurrentPerProfile =
       Number.isFinite(configured) && configured > 0 ? configured : 3;
+  }
+
+  /** 解析 excludedWorkers JSON，非法内容视为空列表 */
+  parseExcludedWorkers(raw?: string | null): number[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((n) => Number(n))
+        .filter((n) => Number.isFinite(n) && n >= 0);
+    } catch {
+      return [];
+    }
   }
 
   async countSubmittedByProfile(profileIndex: number): Promise<number> {
@@ -67,7 +82,7 @@ export class TasksQueueService {
       return null;
     }
 
-    const queueItem = await this.tasksQueueRepository.findOne({
+    const candidates = await this.tasksQueueRepository.find({
       where: [{ status: 'pending' }, { status: 'retrying' }],
       relations: {
         task: {
@@ -75,6 +90,12 @@ export class TasksQueueService {
         },
       },
       order: { queueId: 'ASC' },
+    });
+
+    // 跳过已排除当前 profile 的任务（调度器改派后）
+    const queueItem = candidates.find((item) => {
+      const excluded = this.parseExcludedWorkers(item.excludedWorkers);
+      return !excluded.includes(profileIndex);
     });
 
     if (!queueItem) {
@@ -86,12 +107,78 @@ export class TasksQueueService {
       stage: 'rendering',
       startedAt: new Date(),
       workerId,
+      profileIndex,
     });
     await this.tasksRepository.update(queueItem.taskId, {
       status: 'processing',
     });
 
+    queueItem.status = 'processing';
+    queueItem.stage = 'rendering';
+    queueItem.workerId = workerId;
+    queueItem.profileIndex = profileIndex;
     return queueItem;
+  }
+
+  /**
+   * 调度器改派：将 fromProfileIndex 记入排除列表，任务退回 pending 供其他 worker 领取。
+   * 若所有可用 profile 均已排除，则标记 failed。
+   */
+  async reassign(
+    queueId: number,
+    dto: ReassignTaskQueueDto,
+  ): Promise<{ reassigned: boolean; queue: TaskQueue }> {
+    const queue = await this.tasksQueueRepository.findOne({
+      where: { queueId },
+      relations: { task: true },
+    });
+    if (!queue) {
+      throw new NotFoundException(`TaskQueue ${queueId} not found`);
+    }
+
+    const excluded = this.parseExcludedWorkers(queue.excludedWorkers);
+    if (!excluded.includes(dto.fromProfileIndex)) {
+      excluded.push(dto.fromProfileIndex);
+    }
+    excluded.sort((a, b) => a - b);
+
+    const maxBrowsers =
+      Number.isFinite(dto.maxBrowsers) && (dto.maxBrowsers as number) > 0
+        ? Math.min(dto.maxBrowsers as number, 5)
+        : 5;
+    const allExcluded = Array.from({ length: maxBrowsers }, (_, i) => i).every(
+      (i) => excluded.includes(i),
+    );
+
+    const errorMessage =
+      dto.errorMessage ??
+      queue.errorMessage ??
+      `worker-${dto.fromProfileIndex} 连续失败，已排除`;
+
+    if (allExcluded) {
+      queue.status = 'failed';
+      queue.stage = 'rendering';
+      queue.excludedWorkers = JSON.stringify(excluded);
+      queue.workerId = undefined;
+      queue.profileIndex = undefined;
+      queue.errorMessage = `${errorMessage} | 所有 worker 均已排除，任务失败`;
+      queue.completedAt = new Date();
+      await this.tasksQueueRepository.save(queue);
+      await this.tasksRepository.update(queue.taskId, { status: 'failed' });
+      return { reassigned: false, queue };
+    }
+
+    queue.status = 'pending';
+    queue.stage = 'init';
+    queue.retryCount = 0;
+    queue.workerId = undefined;
+    queue.profileIndex = undefined;
+    queue.excludedWorkers = JSON.stringify(excluded);
+    queue.errorMessage = errorMessage;
+    queue.completedAt = undefined;
+    await this.tasksQueueRepository.save(queue);
+    await this.tasksRepository.update(queue.taskId, { status: 'pending' });
+    return { reassigned: true, queue };
   }
 
   async update(queueId: number, dto: UpdateTaskQueueDto): Promise<TaskQueue> {

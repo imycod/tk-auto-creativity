@@ -14,13 +14,13 @@ import {
   DownloadsManagerFailure,
   ensureChatboxExpanded,
   fillCreativeStudioPrompt,
-  InsufficientCreditsError,
   promptMatches,
   setCreativeStudioDuration,
   submitCreativeStudioPrompt,
   uploadImagesToCreativeStudio,
 } from '../core/browser/creative-studio.helper';
 import { RemoteTaskQueue } from './interface/remote-task-queue.dto';
+import { ConsumerSchedulerService } from './consumer-scheduler.service';
 
 const CREATIVE_STUDIO_URL = "https://ads.tiktok.com/creative/creativestudio/image-to-video"
 const SUBMIT_SLOT_FULL = 'SUBMIT_SLOT_FULL';
@@ -37,6 +37,7 @@ export class ConsumerService {
     private readonly httpService: HttpService,
     private readonly browserService: BrowserService,
     private readonly configService: ConfigService,
+    private readonly scheduler: ConsumerSchedulerService,
   ) {
     this.autoViApiUrl = this.configService.get('AUTO_VI_API_URL') as string;
     const configured = Number(this.configService.get('MAX_BROWSERS'));
@@ -180,26 +181,71 @@ export class ConsumerService {
         return false;
       }
 
-      // 积分不足：直接失败写入 errorMessage，重试无意义
-      if (error instanceof InsufficientCreditsError) {
+      // 可改派错误（积分不足 / 未登录 chatbox 超时 / loadState 超时）：
+      // 按 worker 累计失败；达 3 次则调度改派其他 worker
+      if (this.scheduler.isReassignableError(error)) {
+        const failCount = this.scheduler.recordWorkerFailure(
+          queueId,
+          profileIndex,
+        );
+
+        if (this.scheduler.shouldReassign(queueId, profileIndex)) {
+          try {
+            const result = await this.scheduler.reassignToOtherWorker(
+              queueItem,
+              profileIndex,
+              message,
+            );
+            if (!result.reassigned) {
+              this.logger.error(
+                `[worker-${profileIndex}] 任务 ${taskId} 调度失败（无可用 worker）: ${message}`,
+              );
+            }
+          } catch (scheduleError) {
+            this.logger.error(
+              `[worker-${profileIndex}] 任务 ${taskId} 调度改派异常: ${(scheduleError as Error).message}`,
+            );
+            try {
+              await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
+                status: 'failed',
+                stage: 'rendering',
+                profileIndex,
+                errorMessage: message,
+                completedAt: new Date().toISOString(),
+                retryCount: (queueItem.retryCount || 0) + 1,
+              }));
+              await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
+                status: 'failed',
+              }));
+            } catch (reportError) {
+              this.logger.error(
+                `[worker-${profileIndex}] 任务 ${taskId} 失败状态回写失败: ${(reportError as Error).message}`,
+              );
+            }
+          }
+          return false;
+        }
+
+        // 未达改派阈值：标记 retrying，保留给后续领取（含其他 worker）
         try {
           await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
-            status: 'failed',
+            status: 'retrying',
             stage: 'rendering',
             profileIndex,
             errorMessage: message,
             completedAt: new Date().toISOString(),
+            retryCount: (queueItem.retryCount || 0) + 1,
           }));
           await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
-            status: 'failed',
+            status: 'retrying',
           }));
         } catch (reportError) {
           this.logger.error(
-            `[worker-${profileIndex}] 任务 ${taskId} 积分不足回写失败: ${(reportError as Error).message}`,
+            `[worker-${profileIndex}] 任务 ${taskId} 可改派错误回写失败: ${(reportError as Error).message}`,
           );
         }
         this.logger.error(
-          `[worker-${profileIndex}] 任务 ${taskId} ${message}`,
+          `[worker-${profileIndex}] 任务 ${taskId} 失败(${failCount}/3，达上限将改派): ${message}`,
         );
         return false;
       }

@@ -29,6 +29,9 @@
 
     error_message TEXT,
 
+    -- JSON 数组，记录已被调度器排除的 profile 序号，如 "[0,1]"
+    excluded_workers TEXT,
+
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
 

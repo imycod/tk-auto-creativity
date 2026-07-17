@@ -1,9 +1,10 @@
-﻿import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, Query } from '@nestjs/common';
+﻿import { Controller, Post, Body, Patch, Param, ParseIntPipe } from '@nestjs/common';
 import { TasksQueueService } from './tasks-queue.service';
 import { UpdateTaskQueueDto } from './dto/update-task-queue.dto';
 import { FindAllTaskQueueDto } from './dto/find-all-task-queue.dto';
 import { ApiResponse } from 'src/common/decorators/api-response.decorator';
 import { FindWithStatussDto } from './dto/find-with-statuss.dto';
+import { ReassignTaskQueueDto } from './dto/reassign-task-queue.dto';
 import { TaskQueue } from 'src/entities/task-queue.entity';
 
 @Controller('tasks-queue')
@@ -43,4 +44,12 @@ export class TasksQueueController {
     return this.tasksQueueService.findSubmitted();
   }
 
+  @Post(':queueId/reassign')
+  @ApiResponse('调度改派任务成功')
+  reassign(
+    @Param('queueId', ParseIntPipe) queueId: number,
+    @Body() dto: ReassignTaskQueueDto,
+  ) {
+    return this.tasksQueueService.reassign(queueId, dto);
+  }
 }

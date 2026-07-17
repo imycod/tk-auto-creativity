@@ -10,6 +10,8 @@ export interface RemoteTaskQueue {
   profileIndex?: number;
   retryCount: number;
   errorMessage?: string;
+  /** 已被调度器排除的 profile 列表 JSON，如 "[0,1]" */
+  excludedWorkers?: string;
   task: {
     promptText: string;
     duration?: number;

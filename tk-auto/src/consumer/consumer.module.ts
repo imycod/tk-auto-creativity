@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ConsumerService } from './consumer.service';
+import { ConsumerSchedulerService } from './consumer-scheduler.service';
 import { CoreModule } from '../core/core.module';
 
 @Module({
   imports: [HttpModule, CoreModule],
   controllers: [],
-  providers: [ConsumerService],
+  providers: [ConsumerService, ConsumerSchedulerService],
 })
 export class ConsumerModule {}
