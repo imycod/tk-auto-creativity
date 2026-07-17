@@ -54,8 +54,31 @@ const handleRemove = (file: UploadFile) => {
   ruleFormRef.value?.validateField("imageList").catch(() => undefined);
 };
 
+/** 图片边长限制（宽、高均需满足） */
+const MIN_IMAGE_PX = 300;
+const MAX_IMAGE_PX = 6000;
+
+/** 读取本地图片宽高 */
+function readImageSize(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const width = img.naturalWidth;
+      const height = img.naturalHeight;
+      URL.revokeObjectURL(url);
+      resolve({ width, height });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("无法读取图片尺寸"));
+    };
+    img.src = url;
+  });
+}
+
 /** 上传文件前校验 */
-const onBefore = file => {
+const onBefore = async (file: File) => {
   if (!["image/jpeg", "image/png", "image/gif", "image/webp"].includes(file.type)) {
     message("只能上传图片");
     return false;
@@ -65,6 +88,27 @@ const onBefore = file => {
     message(`单个图片大小不能超过2MB`);
     return false;
   }
+
+  try {
+    const { width, height } = await readImageSize(file);
+    if (
+      width < MIN_IMAGE_PX ||
+      height < MIN_IMAGE_PX ||
+      width > MAX_IMAGE_PX ||
+      height > MAX_IMAGE_PX
+    ) {
+      message(
+        `图片尺寸需在 ${MIN_IMAGE_PX}px–${MAX_IMAGE_PX}px 之间（当前 ${width}×${height}）`,
+        { type: "warning" }
+      );
+      return false;
+    }
+  } catch {
+    message("无法读取图片尺寸，请换一张图重试", { type: "error" });
+    return false;
+  }
+
+  return true;
 };
 
 /** 大图预览 */
