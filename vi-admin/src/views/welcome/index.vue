@@ -6,6 +6,8 @@ import { getTaskList } from "@/api/task";
 import { PureTableBar } from "@/components/RePureTableBar";
 import { useRenderIcon } from "@/components/ReIcon/src/hooks";
 import { useTask } from "./hook";
+import { Download, Expand, Upload } from "@element-plus/icons-vue";
+
 const router = useRouter();
 
 import {
@@ -48,6 +50,8 @@ const contentRef = ref();
 const {
   form,
   loading,
+  exportLoading,
+  importLoading,
   statusButtonMap,
   statusOptions,
   statusColorMap,
@@ -57,11 +61,16 @@ const {
   onSearch,
   resetForm,
   openDialog,
+  handleExport,
+  handleDownloadTemplate,
+  handleImportFile,
   handleRegenerate,
   handleDelete,
   handleSizeChange,
   handleCurrentChange,
-  handleSelectionChange
+  handleSelectionChange,
+  sort,
+  handleSortChange
 } = useTask();
 
 onMounted(() => {
@@ -147,6 +156,36 @@ onMounted(() => {
       >
         <template #buttons>
           <el-button
+            type="success"
+            :loading="exportLoading"
+            :icon="Download"
+            @click="handleExport"
+          >
+            导出
+          </el-button>
+          <el-button
+            :icon="Download"
+            @click="handleDownloadTemplate"
+          >
+            下载模板
+          </el-button>
+          <el-upload
+            class="inline-block ml-3 mr-3"
+            accept=".xlsx"
+            :show-file-list="false"
+            :auto-upload="false"
+            :disabled="importLoading"
+            :on-change="handleImportFile"
+          >
+            <el-button
+              type="warning"
+              :loading="importLoading"
+              :icon="Upload"
+            >
+              导入
+            </el-button>
+          </el-upload>
+          <el-button
             type="primary"
             :icon="useRenderIcon(AddFill)"
             @click="openDialog()"
@@ -170,6 +209,8 @@ onMounted(() => {
               background: 'var(--el-fill-color-light)',
               color: 'var(--el-text-color-primary)'
             }"
+            :default-sort="{ prop: sort.sortField, order: sort.sortOrder === 'asc' ? 'ascending' : 'descending' }"
+            @sort-change="handleSortChange"
             @selection-change="handleSelectionChange"
             @page-size-change="handleSizeChange"
             @page-current-change="handleCurrentChange"

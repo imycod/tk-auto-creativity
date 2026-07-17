@@ -49,4 +49,13 @@ export class FindAllTaskQueueDto {
     @IsNumber() 
     @Min(1)
     pageSize?: number = 10;
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (value === '' || value === null) ? undefined : value)
+  sortField?: 'taskId' | 'createdAt';
+
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (value === '' || value === null) ? undefined : value)
+  sortOrder?: 'asc' | 'desc';
 }

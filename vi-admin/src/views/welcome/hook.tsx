@@ -4,9 +4,19 @@ import { addDialog } from "@/components/ReDialog";
 import { reactive, ref, toRaw, h, computed } from "vue";
 import { useColumns } from "./columns";
 import { addTask, getTaskList, deleteTask, regenerateTask } from "@/api/task";
+import { resolveUploadPaths } from "@/api/upload";
 import { FormItemProps } from "./types";
-import { getKeyList, deviceDetection } from "@pureadmin/utils";
+import { deviceDetection } from "@pureadmin/utils";
 import editForm from "./form.vue";
+import type { UploadFile } from "element-plus";
+import {
+  downloadImportTemplate,
+  exportTasksToXlsx,
+  parseImportWorkbook,
+  resolveImportRowImagePaths,
+  readFileAsArrayBuffer,
+  toImportImageUrl
+} from "./excel";
 
 const { columns, statusButtonMap, statusColorMap, statusMap } = useColumns();
 
@@ -20,11 +30,17 @@ export function useTask() {
     promptText: ""
   });
   const loading = ref(true);
+  const exportLoading = ref(false);
+  const importLoading = ref(false);
   const pagination = reactive<PaginationProps>({
     total: 0,
     pageSize: 10,
     currentPage: 1,
     background: true
+  });
+  const sort = reactive({
+    sortField: 'createdAt' as 'taskId' | 'createdAt',
+    sortOrder: 'desc' as 'asc' | 'desc'
   });
   const statusOptions = computed(() => {
     return Object.entries(statusMap).map(([key, value]) => ({
@@ -37,6 +53,7 @@ export function useTask() {
     loading.value = true;
     const { code, data } = await getTaskList({
       ...toRaw(form),
+      ...toRaw(sort),
       currentPage: pagination.currentPage,
       pageSize: pagination.pageSize
     });
@@ -127,6 +144,100 @@ export function useTask() {
     });
   }
 
+  function handleDownloadTemplate() {
+    downloadImportTemplate();
+  }
+
+  async function handleExport() {
+    exportLoading.value = true;
+    try {
+      const { code, data, message: msg } = await getTaskList({
+        ...toRaw(form),
+        ...toRaw(sort),
+        currentPage: 1,
+        pageSize: Math.max(pagination.total, 1)
+      });
+      if (code !== 200) {
+        message(msg || "导出失败", { type: "error" });
+        return;
+      }
+      exportTasksToXlsx(data.list ?? [], statusMap);
+      message("导出成功", { type: "success" });
+    } catch {
+      message("导出失败", { type: "error" });
+    } finally {
+      exportLoading.value = false;
+    }
+  }
+
+  async function handleImportFile(uploadFile: UploadFile) {
+    const file = uploadFile.raw;
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      message("请上传 .xlsx 格式的 Excel 文件", { type: "error" });
+      return;
+    }
+
+    importLoading.value = true;
+    try {
+      const buffer = await readFileAsArrayBuffer(file);
+      const { rows, errors } = parseImportWorkbook(buffer);
+      if (errors.length) {
+        message(errors.slice(0, 5).join("；"), { type: "error" });
+        return;
+      }
+
+      const resolved = await resolveImportRowImagePaths(rows, async paths => {
+        const { code, data, message: msg } = await resolveUploadPaths(paths);
+        if (code !== 200 || !data?.results) {
+          throw new Error(msg || "图片路径解析失败");
+        }
+        return data.results;
+      });
+
+      if (resolved.errors.length) {
+        message(resolved.errors.slice(0, 5).join("、"), { type: "error" });
+        return;
+      }
+
+      let successCount = 0;
+      const failMessages: string[] = [];
+
+      for (const row of resolved.rows) {
+        const { code, message: msg } = await addTask({
+          promptText: row.promptText,
+          imageList: row.imageList.map(toImportImageUrl),
+          duration: row.duration,
+          productId: ""
+        });
+        if (code === 200) {
+          successCount++;
+        } else {
+          failMessages.push(msg || "导入失败");
+        }
+      }
+
+      if (successCount > 0) {
+        await onSearch();
+      }
+
+      if (failMessages.length === 0) {
+        message("导入成功，共 " + successCount + " 条", { type: "success" });
+      } else if (successCount === 0) {
+        message(failMessages[0] || "导入失败", { type: "error" });
+      } else {
+        message(
+          "部分导入成功：成功 " + successCount + " 条，失败 " + failMessages.length + " 条",
+          { type: "warning" }
+        );
+      }
+    } catch {
+      message("读取或解析 Excel 失败", { type: "error" });
+    } finally {
+      importLoading.value = false;
+    }
+  }
   async function handleRegenerate(row) {
     const { code, message: msg } = await regenerateTask(row.taskId);
     if (code === 200) {
@@ -164,10 +275,24 @@ export function useTask() {
     console.log("handleSelectionChange", val);
   }
 
+  function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
+    if (!order) {
+      sort.sortField = 'createdAt';
+      sort.sortOrder = 'desc';
+    } else {
+      sort.sortField = prop as 'taskId' | 'createdAt';
+      sort.sortOrder = order === 'ascending' ? 'asc' : 'desc';
+    }
+    pagination.currentPage = 1;
+    onSearch();
+  }
+
 
   return {
     form,
     loading,
+    exportLoading,
+    importLoading,
     statusOptions,
     statusButtonMap,
     statusColorMap,
@@ -177,10 +302,15 @@ export function useTask() {
     onSearch,
     resetForm,
     openDialog,
+    handleExport,
+    handleDownloadTemplate,
+    handleImportFile,
     handleRegenerate,
     handleDelete,
     handleSizeChange,
     handleCurrentChange,
-    handleSelectionChange
+    handleSelectionChange,
+    sort,
+    handleSortChange
   };
 }

@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
+import { UploadModule } from '../upload/upload.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 // import { TkCoreModule } from '../tk-core';
 import { Task, TaskQueue, Video } from '../entities';
@@ -9,6 +10,7 @@ import { TasksService } from './tasks.service';
 
 @Module({
   imports: [
+    UploadModule,
     TypeOrmModule.forFeature([Task, TaskQueue, Video]),
     // TkCoreModule,
   ],
@@ -21,3 +23,4 @@ import { TasksService } from './tasks.service';
   exports: [TasksService],
 })
 export class TasksModule {}
+

@@ -33,6 +33,8 @@ const {
   handleSizeChange,
   handleCurrentChange,
   downloadAll,
+  sort,
+  handleSortChange,
 } = useQueued();
 
 onMounted(() => {
@@ -134,6 +136,8 @@ onMounted(() => {
               background: 'var(--el-fill-color-light)',
               color: 'var(--el-text-color-primary)'
             }"
+            :default-sort="{ prop: sort.sortField, order: sort.sortOrder === 'asc' ? 'ascending' : 'descending' }"
+            @sort-change="handleSortChange"
             @page-size-change="handleSizeChange"
             @page-current-change="handleCurrentChange"
           />

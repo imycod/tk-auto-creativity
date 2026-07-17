@@ -1,9 +1,16 @@
-import { Controller, Post, Get, Param, Res, UseInterceptors, UploadedFiles, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Controller, Post, Get, Param, Res, UseInterceptors, UploadedFiles, BadRequestException, NotFoundException, Body } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { ApiResponse } from '../common/decorators/api-response.decorator';
+import { ResolveUploadPathsDto } from './dto/resolve-upload-paths.dto';
+import {
+  buildUploadPublicUrl,
+  resolvePublicBaseUrl,
+} from './resolve-upload-path.util';
+import { UploadPathService } from './upload-path.service';
 
 const MIME_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -15,7 +22,17 @@ const MIME_TYPES: Record<string, string> = {
 
 @Controller('upload')
 export class UploadController {
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    private uploadPathService: UploadPathService,
+  ) {}
+
+  @Post('resolve-paths')
+  @ApiResponse('路径解析成功')
+  async resolvePaths(@Body() dto: ResolveUploadPathsDto) {
+    const results = await this.uploadPathService.resolveMany(dto.paths);
+    return { results };
+  }
 
   @Post('images')
   @UseInterceptors(
@@ -34,7 +51,6 @@ export class UploadController {
       throw new BadRequestException('没有上传文件');
     }
 
-    // 容器内路径，Linux用path.join，不用path.win32
     const uploadDir = this.configService.get('UPLOAD_DIR') ?? '/app/uploads/images';
     await fs.mkdir(uploadDir, { recursive: true });
 
@@ -42,15 +58,17 @@ export class UploadController {
 
     for (const file of files) {
       const uniqueName = `${Date.now()}-${file.originalname}`;
-      const destPath = path.join(uploadDir, uniqueName);  // ← 改这里
+      const destPath = path.join(uploadDir, uniqueName);
 
       try {
         await fs.writeFile(destPath, file.buffer);
 
-        const base =
-          this.configService.get('PUBLIC_BASE_URL') ??
-          `http://localhost:${this.configService.get('PORT') ?? 3000}/api`;
-        const publicUrl = `${base}/upload/images/${encodeURIComponent(uniqueName)}`;
+        const publicUrl = buildUploadPublicUrl(
+          uniqueName,
+          resolvePublicBaseUrl(
+            this.configService.get<string>('PUBLIC_BASE_URL'),
+          ),
+        );
         publicUrls.push(publicUrl);
       } catch (err) {
         console.error('文件写入失败:', destPath, err);
@@ -69,7 +87,7 @@ export class UploadController {
   async getImage(@Param('filename') filename: string, @Res() res: Response) {
     const uploadDir = this.configService.get('UPLOAD_DIR') ?? '/app/uploads/images';
     const safeName = path.basename(filename);
-    const filePath = path.join(uploadDir, safeName);  // ← 改这里
+    const filePath = path.join(uploadDir, safeName);
 
     let data: Buffer;
     try {

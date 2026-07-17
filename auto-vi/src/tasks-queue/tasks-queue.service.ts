@@ -1,4 +1,4 @@
-﻿import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { FindAllTaskQueueDto } from './dto/find-all-task-queue.dto';
 import { QueueStatus, TaskQueue } from 'src/entities/task-queue.entity';
@@ -47,7 +47,7 @@ export class TasksQueueService {
   }
 
   async findAll(dto: FindAllTaskQueueDto): Promise<{ list: TaskQueue[], total: number, currentPage: number, pageSize: number }> {
-    const { taskId, status, stage, queueId, currentPage = 1, pageSize = 10 } = dto;
+    const { taskId, status, stage, queueId, currentPage = 1, pageSize = 10, sortField, sortOrder } = dto;
     const query = this.tasksQueueRepository.createQueryBuilder('taskQueue');
     if (taskId) {
       query.andWhere('taskQueue.taskId = :taskId', { taskId });
@@ -62,8 +62,11 @@ export class TasksQueueService {
       query.andWhere('taskQueue.stage = :stage', { stage });
     }
     const total = await query.getCount();
+    const allowedFields = ['taskId', 'createdAt'] as const;
+    const sortColumn = allowedFields.includes(sortField as any) ? sortField : 'taskId';
+    const sortDirection = sortOrder === 'asc' ? 'ASC' : 'DESC';
     const list = await query
-      .orderBy('taskQueue.taskId', 'DESC')
+      .orderBy(`taskQueue.${sortColumn}`, sortDirection)
       .skip((currentPage - 1) * pageSize)
       .take(pageSize)
       .getMany();
@@ -96,7 +99,7 @@ export class TasksQueueService {
       order: { queueId: 'ASC' },
     });
 
-    // 跳过已排除当前 profile 的任务（调度器改派后）
+        // 跳过已排除当前 profile 的任务（调度器改派后）
     const queueItem = candidates.find((item) => {
       const excluded = this.parseExcludedWorkers(item.excludedWorkers);
       return !excluded.includes(profileIndex);

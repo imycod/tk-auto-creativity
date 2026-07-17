@@ -14,6 +14,10 @@ export function useQueued() {
   })
   const loading = ref(true);
   const dataList = ref([]);
+  const sort = reactive({
+    sortField: 'taskId' as 'taskId' | 'createdAt',
+    sortOrder: 'desc' as 'asc' | 'desc'
+  });
 
   const statusMap = {
     "pending": "待生成",
@@ -69,6 +73,7 @@ export function useQueued() {
     {
       label: "任务ID",
       prop: "taskId",
+      sortable: "custom",
     },
     {
       label: "队列ID",
@@ -112,6 +117,7 @@ export function useQueued() {
     {
       label: "创建时间",
       prop: "createdAt",
+      sortable: "custom",
       formatter: (_row, _column, cellValue) =>
         cellValue ? dayjs(cellValue).format("YYYY-MM-DD HH:mm:ss") : "-",
     },
@@ -137,6 +143,7 @@ export function useQueued() {
     loading.value = true;
     const { code, data } = await getTaskQueuedList({
       ...toRaw(form),
+      ...toRaw(sort),
       currentPage: pagination.currentPage,
       pageSize: pagination.pageSize
     });
@@ -170,6 +177,19 @@ export function useQueued() {
     console.log(`current page: ${val}`);
   }
 
+
+  function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
+    if (!order) {
+      sort.sortField = 'taskId';
+      sort.sortOrder = 'desc';
+    } else {
+      sort.sortField = prop as 'taskId' | 'createdAt';
+      sort.sortOrder = order === 'ascending' ? 'asc' : 'desc';
+    }
+    pagination.currentPage = 1;
+    onSearch();
+  }
+
   async function downloadAll() {
     const { code } = await downloadAllApi();
     if (code === 200) {
@@ -190,5 +210,7 @@ export function useQueued() {
     handleSizeChange,
     handleCurrentChange,
     downloadAll,
+    sort,
+    handleSortChange,
   }
 }

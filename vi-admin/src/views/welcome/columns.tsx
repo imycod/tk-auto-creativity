@@ -32,6 +32,7 @@ export function useColumns() {
     {
       label: "任务ID",
       prop: "taskId",
+      sortable: "custom",
       width: 150,
       fixed: "left",
       showOverflowTooltip: false,
@@ -111,6 +112,7 @@ export function useColumns() {
       label: "创建时间",
       width: 150,
       prop: "createdAt",
+      sortable: "custom",
       formatter: (row, _column, cellValue) =>
         cellValue
           ? dayjs(cellValue).format("YYYY-MM-DD HH:mm:ss")
