@@ -63,7 +63,7 @@ export class TasksQueueService {
     }
     const total = await query.getCount();
     const list = await query
-      .orderBy('taskQueue.createdAt', 'ASC')
+      .orderBy('taskQueue.taskId', 'DESC')
       .skip((currentPage - 1) * pageSize)
       .take(pageSize)
       .getMany();

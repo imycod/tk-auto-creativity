@@ -100,6 +100,15 @@ onMounted(() => {
           class="w-45!"
         />
       </el-form-item>
+
+      <el-form-item label="提示词：" prop="promptText">
+        <el-input
+          v-model="form.promptText"
+          placeholder="请输入提示词关键词"
+          clearable
+          class="w-45!"
+        />
+      </el-form-item>
       <el-form-item label="状态：" prop="status">
         <el-select
           v-model="form.status"

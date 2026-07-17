@@ -154,8 +154,6 @@ export function useDownloadNotices(notices: Ref<TabItem[]>) {
     if (data?.list?.length) {
       appendNotices(data.list);
       advanceSince(STORAGE_KEY, data.list);
-    } else {
-      sessionStorage.setItem(STORAGE_KEY, new Date().toISOString());
     }
   };
 
@@ -178,8 +176,6 @@ export function useDownloadNotices(notices: Ref<TabItem[]>) {
     if (failedRes.data?.list?.length) {
       appendFailedNotices(failedRes.data.list);
       advanceSince(STORAGE_KEY_FAILED, failedRes.data.list);
-    } else {
-      sessionStorage.setItem(STORAGE_KEY_FAILED, new Date().toISOString());
     }
   };
 

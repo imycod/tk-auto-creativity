@@ -19,6 +19,11 @@ export class FindAllTaskDto {
   productId?: string;
 
   @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (value === '' || value === null) ? undefined : value)
+  promptText?: string;
+
+  @IsOptional()
   @Transform(({ value }) => (value === '' || value === null) ? undefined : value)
   @IsEnum(TaskStatus)
   status?: TaskStatus;

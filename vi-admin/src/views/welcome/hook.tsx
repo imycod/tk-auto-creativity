@@ -16,7 +16,8 @@ export function useTask() {
   const form = reactive({
     taskId: "",
     status: "",
-    productId: ""
+    productId: "",
+    promptText: ""
   });
   const loading = ref(true);
   const pagination = reactive<PaginationProps>({
