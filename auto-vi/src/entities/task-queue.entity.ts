@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   Entity,
@@ -68,6 +68,13 @@ export class TaskQueue {
    */
   @Column({ name: 'excluded_workers', type: 'text', nullable: true })
   excludedWorkers?: string;
+
+  /**
+   * 调度大轮次数：一轮 = 所有可用 worker 都被排除过一次。
+   * 达到上限（默认 3）后任务标记 failed。
+   */
+  @Column({ name: 'schedule_round', type: 'integer', default: 0 })
+  scheduleRound!: number;
 
   @Column({ name: 'started_at', type: 'datetime', nullable: true })
   startedAt?: Date;

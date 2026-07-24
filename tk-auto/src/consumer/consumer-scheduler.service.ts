@@ -6,9 +6,10 @@ import { InsufficientCreditsError } from '../core/browser/creative-studio.helper
 import { RemoteTaskQueue } from './interface/remote-task-queue.dto';
 
 export interface ReassignResult {
-  /** true = 已改派给其他 worker；false = 所有 worker 排除后最终失败 */
+  /** true = 已改派给其他 worker 或开启下一轮大重试；false = 3 轮后最终失败 */
   reassigned: boolean;
   errorMessage: string;
+  scheduleRound?: number;
 }
 
 /**
@@ -34,7 +35,7 @@ export class ConsumerSchedulerService {
     const configured = Number(this.configService.get('MAX_BROWSERS'));
     this.maxBrowsers =
       Number.isFinite(configured) && configured > 0
-        ? Math.min(configured, 5)
+        ? Math.min(configured, 10)
         : 5;
     const maxFails = Number(this.configService.get('SCHEDULER_MAX_WORKER_FAILURES'));
     this.maxWorkerFailures =
@@ -108,22 +109,34 @@ export class ConsumerSchedulerService {
 
     const payload = response.data as {
       reassigned: boolean;
-      queue?: { excludedWorkers?: string };
+      scheduleRound?: number;
+      queue?: { excludedWorkers?: string; scheduleRound?: number };
     };
 
     // 改派成功后清掉该任务的内存失败计数，让新 worker 从 0 开始
     this.clearWorkerFailures(queueId);
 
+    const scheduleRound =
+      payload?.scheduleRound ?? payload?.queue?.scheduleRound ?? 0;
+
     if (payload?.reassigned) {
-      this.logger.warn(
-        `[scheduler] 任务 ${taskId} 已从 worker-${fromProfileIndex} 改派，排除列表=${payload.queue?.excludedWorkers ?? '[]'}`,
-      );
-      return { reassigned: true, errorMessage: message };
+      const excluded = payload.queue?.excludedWorkers ?? '[]';
+      if (!excluded || excluded === '[]' || excluded === 'null') {
+        this.logger.warn(
+          `[scheduler] 任务 ${taskId} 开启第 ${scheduleRound} 轮大重试（已清空排除列表）`,
+        );
+      } else {
+        this.logger.warn(
+          `[scheduler] 任务 ${taskId} 已从 worker-${fromProfileIndex} 改派，排除列表: ${excluded}，轮次: ${scheduleRound}`,
+        );
+      }
+      return { reassigned: true, errorMessage: message, scheduleRound };
     }
 
     this.logger.error(
-      `[scheduler] 任务 ${taskId} 所有 worker 均已排除，标记失败`,
+      `[scheduler] 任务 ${taskId} 已轮换 ${scheduleRound} 轮仍失败，标记失败`,
     );
-    return { reassigned: false, errorMessage: message };
+    return { reassigned: false, errorMessage: message, scheduleRound };
   }
+
 }

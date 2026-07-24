@@ -42,7 +42,7 @@ export class ConsumerService {
     this.autoViApiUrl = this.configService.get('AUTO_VI_API_URL') as string;
     const configured = Number(this.configService.get('MAX_BROWSERS'));
     this.maxBrowsers = Number.isFinite(configured) && configured > 0
-      ? Math.min(configured, 5)
+      ? Math.min(configured, 10)
       : 5;
   }
 

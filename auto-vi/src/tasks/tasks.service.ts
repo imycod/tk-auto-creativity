@@ -92,6 +92,7 @@ export class TasksService {
     const query = this.tasksRepository.createQueryBuilder('task');
     // 闇€瑕佹妸asset涔熸煡璇㈠嚭锟?
     query.leftJoinAndSelect('task.assets', 'assets');
+    query.leftJoinAndSelect('task.queues', 'queues');
     if (productId) {
       query.andWhere('task.productId = :productId', { productId });
     }
@@ -212,6 +213,8 @@ export class TasksService {
             profileIndex: null,
             renderIndex: null,
             errorMessage: null,
+            excludedWorkers: null,
+            scheduleRound: 0,
             startedAt: null,
             completedAt: null,
           });

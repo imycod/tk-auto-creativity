@@ -28,6 +28,10 @@ export class UpdateTaskQueueDto {
 
   @IsOptional()
   @IsNumber()
+  scheduleRound?: number;
+
+  @IsOptional()
+  @IsNumber()
   retryCount?: number;
 
   @IsOptional()

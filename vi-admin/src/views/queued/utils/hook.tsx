@@ -99,6 +99,46 @@ export function useQueued() {
       width: 100,
     },
     {
+      label: "Worker",
+      prop: "workerId",
+      width: 120,
+      cellRenderer: ({ row }) => (
+        <span>
+          {row.workerId ||
+            (row.profileIndex != null ? `worker-${row.profileIndex}` : '-')}
+        </span>
+      )
+    },
+    {
+      label: "排除Worker",
+      prop: "excludedWorkers",
+      width: 140,
+      cellRenderer: ({ row }) => {
+        let excluded = [];
+        try {
+          excluded = row.excludedWorkers ? JSON.parse(row.excludedWorkers) : [];
+        } catch {
+          excluded = [];
+        }
+        return (
+          <span>
+            {Array.isArray(excluded) && excluded.length
+              ? excluded.map((n) => `worker-${n}`).join(', ')
+              : '-'}
+          </span>
+        );
+      }
+    },
+    {
+      label: "调度轮次",
+      prop: "scheduleRound",
+      width: 100,
+      cellRenderer: ({ row }) => (
+        <span>{row.scheduleRound ?? 0}</span>
+      )
+    },
+
+    {
       label: "错误信息",
       prop: "errorMessage",
       width: 200,

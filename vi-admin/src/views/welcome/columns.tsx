@@ -91,6 +91,47 @@ export function useColumns() {
       )
     },
     {
+      label: "Worker",
+      prop: "queues",
+      width: 180,
+      cellRenderer: ({ row }) => {
+        const queue = Array.isArray(row.queues) ? row.queues[0] : null;
+        if (!queue) return <span style="margin-left: 10px">-</span>;
+        const worker =
+          queue.workerId ||
+          (queue.profileIndex != null ? `worker-${queue.profileIndex}` : null);
+        let excluded = [];
+        try {
+          excluded = queue.excludedWorkers
+            ? JSON.parse(queue.excludedWorkers)
+            : [];
+        } catch {
+          excluded = [];
+        }
+        const excludedText =
+          Array.isArray(excluded) && excluded.length
+            ? `排除: ${excluded.join(',')}`
+            : '';
+        const roundText =
+          queue.scheduleRound > 0 ? `轮次: ${queue.scheduleRound}` : '';
+        return (
+          <div style="margin-left: 10px; line-height: 1.4">
+            <div>{worker || '-'}</div>
+            {excludedText ? (
+              <div style="color: var(--el-color-warning); font-size: 12px">
+                {excludedText}
+              </div>
+            ) : null}
+            {roundText ? (
+              <div style="color: var(--el-text-color-secondary); font-size: 12px">
+                {roundText}
+              </div>
+            ) : null}
+          </div>
+        );
+      }
+    },
+    {
       label: "状态",
       prop: "status",
       cellRenderer: ({ index, row }) => (

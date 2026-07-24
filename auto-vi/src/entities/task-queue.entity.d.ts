@@ -1,4 +1,4 @@
-import { Task } from './task.entity';
+﻿import { Task } from './task.entity';
 export type QueueStage = 'init' | 'preprocess' | 'rendering' | 'postprocess';
 export type QueueStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'retrying';
 export declare class TaskQueue {
