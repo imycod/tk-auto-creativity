@@ -67,7 +67,9 @@ export class ConsumerService {
         return;
       }
 
-      const workerCount = Math.min(this.maxBrowsers, pendingCount);
+      // 有待处理时启动全部 worker；claim 会按 excludedWorkers/槽位过滤。
+      // 若只按 pendingCount 启 worker-0，改派排除 0 后其它 worker 永远拉不起来。
+      const workerCount = this.maxBrowsers;
       this.logger.log(
         `获取到 ${pendingCount} 条待处理任务，启动 ${workerCount} 个浏览器并行消费`,
       );

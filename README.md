@@ -113,6 +113,18 @@ docker-compose.yaml 多个服务集合可使用最后compose构建， 前后端�
 
 ## Changelogs:
 
+### v2.4.0
+
+1. 增加大轮询重试次数 worker-1 到 worker-n 每个worker 重试次数3次，每轮worker-1 到 worker-n 重试次数3次避免一轮下来因浏览器为就绪导致卡死
+2. pending 任务灵活worker消费，避免只有一个pending任务时永远只启用 worker-0，当worker-0 未就绪就卡死
+
+### v2.3.0
+
+1. 任务升序排序
+2. 导入导出模板功能
+3. 通知优化
+4. 任务消费者调度器 (当一个worker 3次消费任务失败后，调度该任务去到下一个worker)
+
 ### v2.1.1
 
 1.极端情况：当视频下载出错（可能网络问题）会弹出悬浮层遮住提交按钮时，那么提交之前会先去检测，并入库出错，并且关闭Download failed 继续submit提交。 （待检验）
