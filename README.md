@@ -7,15 +7,7 @@ git fetch --tags
 git checkout v2.0.0
 ```
 
-## Changelogs
 
-### v1.0.0
-
-完成基本功能，如：Consumer 自动打开目标网站，自动Prompt和Image回填，自动submit，Downloader自动下载目标视频到本地
-
-### v2.0.0 （release）
-
-增加Profile最大并发数，每个Profile同一时间轮询内最多消费3个任务，每个任务生成完毕并且下载完毕后，才能继续消费任务，根据status判断
 
 ## Dev 开发
 
@@ -113,7 +105,7 @@ docker-compose.yaml 多个服务集合可使用最后compose构建， 前后端�
 
 ## Changelogs:
 
-### v2.4.0
+### v2.4.0 （release）
 
 1. 增加大轮询重试次数 worker-1 到 worker-n 每个worker 重试次数3次，每轮worker-1 到 worker-n 重试次数3次避免一轮下来因浏览器为就绪导致卡死
 2. pending 任务灵活worker消费，避免只有一个pending任务时永远只启用 worker-0，当worker-0 未就绪就卡死
@@ -137,8 +129,11 @@ docker-compose.yaml 多个服务集合可使用最后compose构建， 前后端�
 
 ### v2.0.0
 
-每个profile 2min同时并发消费数限制3以内
+每个profile 2min同时并发消费数限制3以内, 增加Profile最大并发数，每个Profile同一时间轮询内最多消费3个任务，每个任务生成完毕并且下载完毕后，才能继续消费任务，根据status判断
 
 ### v1.0.0
 
-基础功能可用，tk-core (任务消费者任务下载者)，auto-vi（restful api 服务提供者），vi-admin （管理面板）
+基础功能可用，tk-core (任务消费者任务下载者)，auto-vi（restful api 服务提供者），vi-admin （管理面板）, 完成基本功能，如：Consumer 自动打开目标网站，自动Prompt和Image回填，自动submit，Downloader自动下载目标视频到本地
+
+
+
