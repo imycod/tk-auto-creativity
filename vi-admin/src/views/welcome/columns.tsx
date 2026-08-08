@@ -68,17 +68,20 @@ export function useColumns() {
       width: 400,
       cellRenderer: ({ index, row }) => (
         <div style="display: flex; align-items: center">
-          {row.assets.map(item => (
-            <el-image
-              preview-teleported
-              loading="lazy"
-              src={item?.assetPath}
-              preview-src-list={row.assets.map(v => v?.assetPath)}
-              initial-index={index}
-              fit="cover"
-              class="size-25"
-            />
-          ))}
+          {[...(row.assets ?? [])]
+            .sort((a, b) => (a?.sortOrder ?? 0) - (b?.sortOrder ?? 0) || Number(a?.assetId ?? 0) - Number(b?.assetId ?? 0))
+            .map(item => item?.assetType === "video" ? (
+              <video src={item?.assetPath} controls muted class="size-25 object-cover" />
+            ) : (
+              <el-image
+                preview-teleported
+                loading="lazy"
+                src={item?.assetPath}
+                preview-src-list={(row.assets ?? []).filter(v => v?.assetType !== "video").map(v => v?.assetPath)}
+                fit="cover"
+                class="size-25"
+              />
+            ))}
         </div>
       )
     },

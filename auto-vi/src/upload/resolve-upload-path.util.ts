@@ -1,11 +1,9 @@
 ﻿import * as path from 'path';
 
-const ALLOWED_IMAGE_EXTENSIONS = new Set([
-  '.png',
-  '.webp',
-  '.jpg',
-  '.jpeg',
-]);
+const ALLOWED_IMAGE_EXTENSIONS = new Set(['.png', '.webp', '.jpg', '.jpeg', '.gif']);
+const ALLOWED_VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov']);
+
+export type UploadAssetType = 'image' | 'video';
 
 /** Default UNC prefix used in Excel export (case-insensitive match). */
 export const DEFAULT_UPLOAD_UNC_PREFIX =
@@ -54,6 +52,28 @@ export function isAllowedImageExtension(ext: string): boolean {
   return ALLOWED_IMAGE_EXTENSIONS.has(ext.toLowerCase());
 }
 
+export function isAllowedVideoExtension(ext: string): boolean {
+  return ALLOWED_VIDEO_EXTENSIONS.has(ext.toLowerCase());
+}
+
+export function isAllowedMediaExtension(
+  assetType: UploadAssetType,
+  ext: string,
+): boolean {
+  return assetType === 'image'
+    ? isAllowedImageExtension(ext)
+    : isAllowedVideoExtension(ext);
+}
+
+export function inferAssetTypeFromRelativePath(
+  relativePath: string,
+): UploadAssetType | null {
+  const normalized = normalizePathKey(relativePath);
+  if (normalized.startsWith('images/')) return 'image';
+  if (normalized.startsWith('videos/')) return 'video';
+  return null;
+}
+
 export function isAbsoluteFilesystemPath(input: string): boolean {
   const trimmed = input.trim();
   if (!trimmed) return false;
@@ -62,9 +82,7 @@ export function isAbsoluteFilesystemPath(input: string): boolean {
   return path.isAbsolute(trimmed);
 }
 
-/**
- * Extract path relative to the uploads root, e.g. `images/foo.jpg`.
- */
+/** Extract path relative to the uploads root, e.g. `images/foo.jpg` or `videos/foo.mp4`. */
 export function extractUploadRelativePath(
   input: string,
   uncPrefix?: string,
@@ -87,6 +105,12 @@ export function extractUploadRelativePath(
     return normalizedInput.slice(apiUploadIndex + apiUploadMarker.length);
   }
 
+  const uploadMarker = '/upload/';
+  const uploadIndex = normalizedInput.indexOf(uploadMarker);
+  if (uploadIndex !== -1) {
+    return normalizedInput.slice(uploadIndex + uploadMarker.length);
+  }
+
   const uploadsMarker = '/uploads/';
   const markerIndex = normalizedInput.indexOf(uploadsMarker);
   if (markerIndex !== -1) {
@@ -98,7 +122,7 @@ export function extractUploadRelativePath(
     return '';
   }
 
-  if (normalizedInput.startsWith('images/')) {
+  if (normalizedInput.startsWith('images/') || normalizedInput.startsWith('videos/')) {
     return normalizedInput;
   }
 
@@ -130,10 +154,7 @@ export function resolveUploadFilesystemPath(
   return candidate;
 }
 
-/**
- * Build ordered, unique filesystem paths to probe for an imported image.
- * Tries configured UPLOAD_ROOT first (Docker), then UNC prefix (Windows share), then the raw path.
- */
+/** Build ordered, unique filesystem paths to probe for an imported media file. */
 export function collectUploadFilesystemCandidates(
   input: string,
   relativePath: string,
@@ -170,17 +191,18 @@ export function collectUploadFilesystemCandidates(
 export function buildUploadPublicUrl(
   filename: string,
   publicBaseUrl: string,
+  assetType: UploadAssetType = 'image',
 ): string {
   const base = resolvePublicBaseUrl(publicBaseUrl);
-  return `${base}/upload/images/${encodeURIComponent(filename)}`;
+  const folder = assetType === 'video' ? 'videos' : 'images';
+  return `${base}/upload/${folder}/${encodeURIComponent(filename)}`;
 }
 
-/**
- * Rewrite localhost / legacy upload URLs to the configured public base.
- */
-export function rewriteUploadImageUrl(
+/** Rewrite localhost / legacy upload URLs to the configured public base. */
+export function rewriteUploadMediaUrl(
   input: string,
   publicBaseUrl?: string | null,
+  expectedAssetType?: UploadAssetType,
 ): string {
   const trimmed = input.trim();
   if (!trimmed) return trimmed;
@@ -188,10 +210,14 @@ export function rewriteUploadImageUrl(
   const base = resolvePublicBaseUrl(publicBaseUrl);
 
   const rewriteFromRelative = (relative: string | null): string | null => {
-    if (!relative?.startsWith('images/')) return null;
-    const filename = relative.slice('images/'.length);
+    if (!relative) return null;
+    const assetType = inferAssetTypeFromRelativePath(relative);
+    if (!assetType) return null;
+    if (expectedAssetType && assetType !== expectedAssetType) return null;
+    const folderPrefix = assetType === 'video' ? 'videos/' : 'images/';
+    const filename = relative.slice(folderPrefix.length);
     if (!filename) return null;
-    return buildUploadPublicUrl(path.basename(filename), base);
+    return buildUploadPublicUrl(path.basename(filename), base, assetType);
   };
 
   const rewritten = rewriteFromRelative(extractUploadRelativePath(trimmed));
@@ -202,26 +228,33 @@ export function rewriteUploadImageUrl(
   if (isHttpUrl(trimmed)) {
     try {
       const url = new URL(trimmed);
-      const marker = '/upload/images/';
-      const idx = url.pathname.indexOf(marker);
-      if (idx !== -1) {
-        const filename = decodeURIComponent(
-          url.pathname.slice(idx + marker.length),
-        );
-        if (filename) {
-          return buildUploadPublicUrl(path.basename(filename), base);
+      for (const assetType of ['image', 'video'] as const) {
+        if (expectedAssetType && assetType !== expectedAssetType) continue;
+        const marker = `/upload/${assetType === 'video' ? 'videos' : 'images'}/`;
+        const idx = url.pathname.indexOf(marker);
+        if (idx !== -1) {
+          const filename = decodeURIComponent(
+            url.pathname.slice(idx + marker.length),
+          );
+          if (filename) {
+            return buildUploadPublicUrl(path.basename(filename), base, assetType);
+          }
         }
       }
     } catch {
       // fall through
     }
 
-    const legacyMatch = trimmed.match(/\/upload\/images\/([^/?#]+)/i);
-    if (legacyMatch?.[1]) {
-      return buildUploadPublicUrl(
-        path.basename(decodeURIComponent(legacyMatch[1])),
-        base,
-      );
+    const legacyMatch = trimmed.match(/\/upload\/(images|videos)\/([^/?#]+)/i);
+    if (legacyMatch?.[1] && legacyMatch?.[2]) {
+      const assetType = legacyMatch[1].toLowerCase() === 'videos' ? 'video' : 'image';
+      if (!expectedAssetType || expectedAssetType === assetType) {
+        return buildUploadPublicUrl(
+          path.basename(decodeURIComponent(legacyMatch[2])),
+          base,
+          assetType,
+        );
+      }
     }
   }
 
@@ -232,9 +265,16 @@ export function rewriteUploadImageUrl(
   return trimmed;
 }
 
+export function rewriteUploadImageUrl(
+  input: string,
+  publicBaseUrl?: string | null,
+): string {
+  return rewriteUploadMediaUrl(input, publicBaseUrl, 'image');
+}
+
 export function inferUploadRoot(uploadDir: string): string {
   const normalized = uploadDir.replace(/\\/g, '/');
-  if (normalized.endsWith('/images')) {
+  if (normalized.endsWith('/images') || normalized.endsWith('/videos')) {
     return path.dirname(uploadDir);
   }
   return uploadDir;

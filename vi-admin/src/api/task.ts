@@ -1,11 +1,28 @@
 import { http } from "@/utils/http";
 
+export type CreateTaskAsset = {
+  assetType: "image" | "video";
+  assetPath: string;
+  sortOrder: number;
+  meta?: unknown;
+};
+
+export type CreateTaskRequest = {
+  promptText: string;
+  productId?: string;
+  duration?: number;
+  batchDate?: string;
+  assets?: CreateTaskAsset[];
+  /** Excel import compatibility for legacy image-only requests. */
+  imageList?: string[];
+};
+
 type ResultAddTask = {
   code: number;
   message: string;
   data?: {
     promptText: string;
-    imageList: string[];
+    assets: CreateTaskAsset[];
   };
 };
 
@@ -38,7 +55,7 @@ export const getTaskList = (data?: object) => {
 };
 
 /** 新增任务 */
-export const addTask = (data?: object) => {
+export const addTask = (data: CreateTaskRequest) => {
   return http.request<ResultAddTask>("post", "/api/tasks/add", { data });
 };
 

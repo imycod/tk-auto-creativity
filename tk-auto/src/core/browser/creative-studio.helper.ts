@@ -7,8 +7,8 @@ export function resolveLocalImagePaths(
   assetPaths: string[],
   sambaShare?: string,
 ): string[] {
-  console.log('assetPaths---', assetPaths)
-  console.log('sambaShare---', sambaShare)
+  console.log('assetPaths---', assetPaths);
+  console.log('sambaShare---', sambaShare);
   return assetPaths.map((raw) => {
     if (existsSync(raw)) {
       return resolve(raw);
@@ -19,7 +19,14 @@ export function resolveLocalImagePaths(
         new URL(raw).pathname.split('/').pop() ?? '',
       );
       if (sambaShare && filename) {
-        const sambaPath = win32.join(sambaShare, 'docker', 'vi-system', 'uploads', 'images', filename);
+        const sambaPath = win32.join(
+          sambaShare,
+          'docker',
+          'vi-system',
+          'uploads',
+          'images',
+          filename,
+        );
         if (existsSync(sambaPath)) {
           return sambaPath;
         }
@@ -58,9 +65,9 @@ const UPLOAD_MENU_TEXTS = [
   '本地上传',
 ];
 
-export async function uploadImagesToCreativeStudio(
+export async function uploadMediaToCreativeStudio(
   page: Page,
-  imagePaths: string[],
+  mediaPaths: string[],
 ): Promise<void> {
   await dismissUploadOverlays(page);
 
@@ -71,7 +78,7 @@ export async function uploadImagesToCreativeStudio(
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await tryUploadImagesOnce(page, uploadBtn.first(), imagePaths);
+      await tryUploadMediaOnce(page, uploadBtn.first(), mediaPaths);
       return;
     } catch (error) {
       lastError = error as Error;
@@ -80,8 +87,11 @@ export async function uploadImagesToCreativeStudio(
     }
   }
 
-  throw lastError ?? new Error('图片上传失败');
+  throw lastError ?? new Error('Media upload failed');
 }
+
+/** @deprecated Use uploadMediaToCreativeStudio for images or videos. */
+export const uploadImagesToCreativeStudio = uploadMediaToCreativeStudio;
 
 /** 关闭弹层并展开 chatbox，避免透明 Expand 遮罩挡住 Upload 按钮 */
 async function dismissUploadOverlays(page: Page): Promise<void> {
@@ -108,7 +118,13 @@ export async function ensureChatboxExpanded(page: Page): Promise<void> {
 
       scrollElToBottom(document.documentElement);
       scrollElToBottom(document.body);
-      window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+      window.scrollTo(
+        0,
+        Math.max(
+          document.body.scrollHeight,
+          document.documentElement.scrollHeight,
+        ),
+      );
 
       document
         .querySelectorAll('[class*="overflow"], [style*="overflow"]')
@@ -121,12 +137,18 @@ export async function ensureChatboxExpanded(page: Page): Promise<void> {
 
   const chatbox = page.locator(CHATBOX_CONTAINER_SELECTOR);
   if ((await chatbox.count()) > 0) {
-    await chatbox.first().scrollIntoViewIfNeeded().catch(() => undefined);
+    await chatbox
+      .first()
+      .scrollIntoViewIfNeeded()
+      .catch(() => undefined);
   }
 
   const expandBtn = page.locator(EXPAND_CHATBOX_SELECTOR);
   if ((await expandBtn.count()) > 0) {
-    await expandBtn.first().click({ force: true }).catch(() => undefined);
+    await expandBtn
+      .first()
+      .click({ force: true })
+      .catch(() => undefined);
     await page.waitForTimeout(400);
   }
 
@@ -154,15 +176,15 @@ export async function ensureChatboxExpanded(page: Page): Promise<void> {
 }
 
 /** 单次上传尝试：先找 file input，再走 filechooser 兜底 */
-async function tryUploadImagesOnce(
+async function tryUploadMediaOnce(
   page: Page,
   uploadBtn: Locator,
-  imagePaths: string[],
+  mediaPaths: string[],
 ): Promise<void> {
   const existingInput = await findUsableFileInput(page);
   if (existingInput) {
-    await existingInput.setInputFiles(imagePaths);
-    await waitForImagePreview(page);
+    await existingInput.setInputFiles(mediaPaths);
+    await waitForMediaPreviews(page, mediaPaths.length);
     return;
   }
 
@@ -178,8 +200,8 @@ async function tryUploadImagesOnce(
   const openedInput = await waitForUsableFileInput(page, 5000);
   if (openedInput) {
     fileChooserPromise.catch(() => undefined);
-    await openedInput.setInputFiles(imagePaths);
-    await waitForImagePreview(page);
+    await openedInput.setInputFiles(mediaPaths);
+    await waitForMediaPreviews(page, mediaPaths.length);
     return;
   }
 
@@ -199,8 +221,8 @@ async function tryUploadImagesOnce(
   }
 
   const fileChooser = await fileChooserPromise;
-  await fileChooser.setFiles(imagePaths);
-  await waitForImagePreview(page);
+  await fileChooser.setFiles(mediaPaths);
+  await waitForMediaPreviews(page, mediaPaths.length);
 }
 
 /** 查找可用的 file input（含 hidden，Playwright 可直接 setInputFiles） */
@@ -235,7 +257,7 @@ async function waitForUsableFileInput(
  */
 export async function clearCreativeStudioInputs(page: Page): Promise<void> {
   await ensureChatboxExpanded(page);
-  await removeUploadedImages(page);
+  await removeUploadedMedia(page);
   await clearCreativeStudioPrompt(page);
 }
 
@@ -246,7 +268,10 @@ export async function clearCreativeStudioPrompt(page: Page): Promise<void> {
     return;
   }
 
-  await editor.first().click().catch(() => undefined);
+  await editor
+    .first()
+    .click()
+    .catch(() => undefined);
   await page.keyboard.press('Control+A').catch(() => undefined);
   await page.keyboard.press('Delete').catch(() => undefined);
 
@@ -263,7 +288,10 @@ export async function clearCreativeStudioPrompt(page: Page): Promise<void> {
           if (!el) return;
           el.innerHTML = '<p></p>';
           el.dispatchEvent(
-            new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }),
+            new InputEvent('input', {
+              bubbles: true,
+              inputType: 'deleteContent',
+            }),
           );
         })
         .catch(() => undefined);
@@ -276,9 +304,9 @@ export async function clearCreativeStudioPrompt(page: Page): Promise<void> {
  * 移除所有已上传图片的预览。
  * 反复点击预览上的删除/移除按钮，直到没有可移除项为止（最多尝试若干次）。
  */
-async function removeUploadedImages(page: Page): Promise<void> {
+async function removeUploadedMedia(page: Page): Promise<void> {
   for (let i = 0; i < 12; i += 1) {
-    const removed = await clickRemoveImageButton(page);
+    const removed = await clickRemoveMediaButton(page);
     if (!removed) {
       break;
     }
@@ -291,7 +319,7 @@ async function removeUploadedImages(page: Page): Promise<void> {
  * 既匹配 aria-label / title / 文本里的 Delete、Remove、Close、删除、移除 关键字，
  * 也匹配按钮内含的关闭图标（如 <ks-icon-close-small>）。
  */
-async function clickRemoveImageButton(page: Page): Promise<boolean> {
+async function clickRemoveMediaButton(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const keywords = ['delete', 'remove', 'close', '删除', '移除'];
 
@@ -348,7 +376,10 @@ async function clickRemoveImageButton(page: Page): Promise<boolean> {
 const PROMPT_SEQUENTIAL_THRESHOLD = 100;
 
 /** 通过 DOM + InputEvent 写入 ProseMirror（长文本首选） */
-async function injectPromptViaDom(page: Page, promptText: string): Promise<void> {
+async function injectPromptViaDom(
+  page: Page,
+  promptText: string,
+): Promise<void> {
   await page.evaluate((text) => {
     const el = document.querySelector(
       'div.ProseMirror[contenteditable="true"]',
@@ -438,7 +469,8 @@ const DURATION_BUTTON_SELECTOR = '[class*="chatbox-setting-btn"]';
 const DURATION_INNER_BUTTON_SELECTOR =
   'button.button--sm[part="base"], button[part="base"]';
 // 新增：更精确的定位第三个 dropdown 中的 button
-const DURATION_DROPDOWN_SELECTOR = 'ks-dropdown-menu-1-1-1m, [data-inspector*="ks-dropdown-menu-1-1-1m"]';
+const DURATION_DROPDOWN_SELECTOR =
+  'ks-dropdown-menu-1-1-1m, [data-inspector*="ks-dropdown-menu-1-1-1m"]';
 /**
  * 在提交前设置 Creative Studio 的视频生成时长（秒）。
  * 点击 chatbox 内的时长按钮（如 "14s"），在弹出的 ks-input-number 中填入目标值。
@@ -467,8 +499,13 @@ export async function setCreativeStudioDuration(
 
 /** 点击第三个 duration setting button */
 async function clickThirdDurationSettingButton(page: Page): Promise<boolean> {
-  const chatbox = page.locator('fieldset[data-chatbox-part="container"], .chatbox');
-  await chatbox.first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+  const chatbox = page.locator(
+    'fieldset[data-chatbox-part="container"], .chatbox',
+  );
+  await chatbox
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 })
+    .catch(() => {});
 
   // 优先尝试通过 shadow DOM 精确找第3个
   const clicked = await clickDurationButtonInShadow(page);
@@ -495,16 +532,23 @@ async function clickThirdDurationSettingButton(page: Page): Promise<boolean> {
 /** 通过 evaluate 遍历 shadow DOM 找第三个 ks-dropdown-menu 里的 button */
 async function clickDurationButtonInShadow(page: Page): Promise<boolean> {
   return page.evaluate(() => {
-    function walk(root: Document | ShadowRoot, results: Element[] = []): Element[] {
+    function walk(
+      root: Document | ShadowRoot,
+      results: Element[] = [],
+    ): Element[] {
       // 找所有 ks-dropdown-menu
-      const dropdowns = root.querySelectorAll('ks-dropdown-menu-1-1-1m, [class*="KsDropDownMenu"]');
+      const dropdowns = root.querySelectorAll(
+        'ks-dropdown-menu-1-1-1m, [class*="KsDropDownMenu"]',
+      );
 
       for (const dropdown of dropdowns) {
         const shadow = (dropdown as Element).shadowRoot;
         if (!shadow) continue;
 
         // 在每个 dropdown 里找 button
-        const btn = shadow.querySelector('button.button--sm[part="base"], button[part="base"], button.button--sm, button');
+        const btn = shadow.querySelector(
+          'button.button--sm[part="base"], button[part="base"], button.button--sm, button',
+        );
         if (btn) results.push(btn as Element);
       }
 
@@ -517,7 +561,9 @@ async function clickDurationButtonInShadow(page: Page): Promise<boolean> {
       return results;
     }
 
-    const chatbox = document.querySelector('fieldset[data-chatbox-part="container"]') || document;
+    const chatbox =
+      document.querySelector('fieldset[data-chatbox-part="container"]') ||
+      document;
     const allButtons = walk(chatbox as Document | ShadowRoot);
 
     // 优先取第三个
@@ -533,8 +579,14 @@ async function clickDurationButtonInShadow(page: Page): Promise<boolean> {
 /** 点击 chatbox 内的时长设置按钮（ks-button-* shadow 内的 button[part=base]） */
 async function clickDurationSettingButton(page: Page): Promise<boolean> {
   const chatbox = page.locator(CHATBOX_CONTAINER_SELECTOR);
-  await chatbox.first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => undefined);
-  await chatbox.first().scrollIntoViewIfNeeded().catch(() => undefined);
+  await chatbox
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 })
+    .catch(() => undefined);
+  await chatbox
+    .first()
+    .scrollIntoViewIfNeeded()
+    .catch(() => undefined);
 
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
@@ -561,7 +613,9 @@ async function clickDurationSettingButton(page: Page): Promise<boolean> {
 }
 
 /** 递归遍历 open shadow DOM，定位时长按钮并点击内部 button */
-async function clickDurationSettingButtonInShadow(page: Page): Promise<boolean> {
+async function clickDurationSettingButtonInShadow(
+  page: Page,
+): Promise<boolean> {
   return page.evaluate(() => {
     function isKsButtonTag(tagName: string): boolean {
       return /^ks-button/i.test(tagName);
@@ -618,7 +672,10 @@ async function clickDurationSettingButtonInShadow(page: Page): Promise<boolean> 
 }
 
 /** 在弹出的 ks-input-number 中填入时长 */
-async function fillDurationInput(page: Page, duration: number): Promise<boolean> {
+async function fillDurationInput(
+  page: Page,
+  duration: number,
+): Promise<boolean> {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
     const filled = await page.evaluate((durationValue) => {
@@ -698,7 +755,9 @@ export class InsufficientCreditsError extends Error {
  * 读取页面右上角/操作区 coin 按钮旁的当前积分。
  * DOM：ks-icon[name="coin"] + 相邻 span.tiktok-labelMd（如 1980）
  */
-export async function readCreativeStudioCredits(page: Page): Promise<number | null> {
+export async function readCreativeStudioCredits(
+  page: Page,
+): Promise<number | null> {
   return page
     .evaluate(() => {
       const deepFindCoinButtons = (
@@ -709,8 +768,9 @@ export async function readCreativeStudioCredits(page: Page): Promise<number | nu
         );
         for (const icon of icons) {
           const host =
-            icon.closest('ks-button-1-1-1m, button, [class*="operation-btn"]') ??
-            icon.parentElement;
+            icon.closest(
+              'ks-button-1-1-1m, button, [class*="operation-btn"]',
+            ) ?? icon.parentElement;
           const span =
             host?.querySelector('span.tiktok-labelMd, span') ??
             icon.nextElementSibling;
@@ -760,9 +820,7 @@ export async function assertEnoughCreditsForDuration(
  */
 export async function submitCreativeStudioPrompt(
   page: Page,
-  onDownloadsFailures?: (
-    failures: DownloadsManagerFailure[],
-  ) => Promise<void>,
+  onDownloadsFailures?: (failures: DownloadsManagerFailure[]) => Promise<void>,
 ): Promise<void> {
   const leftoverFailures = await readDownloadsManagerFailures(page);
   if (leftoverFailures.length > 0 && onDownloadsFailures) {
@@ -782,7 +840,9 @@ export async function submitCreativeStudioPrompt(
   if ((await sendBtn.count()) > 0) {
     const btn = sendBtn.last();
     if (await btn.isDisabled()) {
-      throw new Error('SUBMIT_SLOT_FULL: browser concurrent limit reached, submit button disabled');
+      throw new Error(
+        'SUBMIT_SLOT_FULL: browser concurrent limit reached, submit button disabled',
+      );
     }
     await btn.click();
     await page.waitForTimeout(500);
@@ -809,14 +869,50 @@ export async function submitCreativeStudioPrompt(
   await page.waitForTimeout(500);
 }
 
-async function waitForImagePreview(page: Page): Promise<void> {
-  await page
-    .waitForSelector(
-      'img[alt^="image"], img[src^="blob:"], [class*="preview"] img, [class*="upload"] img',
-      { timeout: 20000 },
-    )
-    .catch(() => undefined);
-  await page.waitForTimeout(800);
+export function mediaPreviewLocator(
+  page: Page,
+  previewSelector: string,
+): Locator {
+  return page
+    .locator(CHATBOX_CONTAINER_SELECTOR)
+    .first()
+    .locator(previewSelector);
+}
+
+async function waitForMediaPreviews(
+  page: Page,
+  expectedCount: number,
+): Promise<void> {
+  const previewSelector = [
+    'img[alt^="image"]',
+    'img[src^="blob:"]',
+    'video',
+    '[class*="preview"] img',
+    '[class*="preview"] video',
+    '[class*="upload"] img',
+    '[class*="upload"] video',
+  ].join(', ');
+  const previews = mediaPreviewLocator(page, previewSelector);
+  const deadline = Date.now() + 20000;
+  let visibleCount = 0;
+  while (Date.now() < deadline) {
+    visibleCount = 0;
+    const previewCount = await previews.count();
+    for (let index = 0; index < previewCount; index += 1) {
+      if (
+        await previews
+          .nth(index)
+          .isVisible()
+          .catch(() => false)
+      )
+        visibleCount += 1;
+    }
+    if (visibleCount >= expectedCount) return;
+    await page.waitForTimeout(250);
+  }
+  if (visibleCount === 0)
+    throw new Error('No image or video preview appeared after media upload');
+  await page.waitForTimeout(1000);
 }
 
 /** 递归遍历 open shadow DOM，按任一匹配文本点击元素 */
@@ -1021,9 +1117,7 @@ async function extractCardErrorDetail(card: Locator): Promise<string> {
  * 组合详情文案 + Task ID / Error code，形成入库用的完整错误信息。
  * 另处理 Preview unavailable（网络导致无预览/无下载按钮）。
  */
-async function extractCardGenerationError(
-  card: Locator,
-): Promise<{
+async function extractCardGenerationError(card: Locator): Promise<{
   message: string;
   detail?: string;
   generationTaskId?: string;
@@ -1262,7 +1356,9 @@ export async function closeDownloadsManager(page: Page): Promise<boolean> {
       return true;
     }
 
-    (closeIcon.closest('ks-button-1-1-1m, button') as HTMLElement | null)?.click();
+    (
+      closeIcon.closest('ks-button-1-1-1m, button') as HTMLElement | null
+    )?.click();
     return true;
   });
 }
@@ -1353,4 +1449,4 @@ async function clickDownloadInCard(card: Locator): Promise<boolean> {
     btn.click();
     return true;
   });
-} 
+}

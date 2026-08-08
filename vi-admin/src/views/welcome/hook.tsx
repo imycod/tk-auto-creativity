@@ -4,6 +4,7 @@ import { addDialog } from "@/components/ReDialog";
 import { reactive, ref, toRaw, h, computed } from "vue";
 import { useColumns } from "./columns";
 import { addTask, getTaskList, deleteTask, regenerateTask } from "@/api/task";
+import type { CreateTaskAsset, CreateTaskRequest } from "@/api/task";
 import { resolveUploadPaths } from "@/api/upload";
 import { FormItemProps } from "./types";
 import { deviceDetection } from "@pureadmin/utils";
@@ -19,6 +20,26 @@ import {
 } from "./excel";
 
 const { columns, statusButtonMap, statusColorMap, statusMap } = useColumns();
+
+function inferAssetType(file: any, assetPath: string): "image" | "video" {
+  const responseType = file?.response?.data?.files?.[0]?.assetType;
+  if (file?.assetType === "video" || responseType === "video") return "video";
+  if (file?.assetType === "image" || responseType === "image") return "image";
+  const source = assetPath || file?.name || "";
+  return /\.(mp4|webm|mov)(\?|#|$)/i.test(source) || /\/videos\//i.test(source)
+    ? "video"
+    : "image";
+}
+
+function toCreateTaskAsset(file: any, sortOrder: number): CreateTaskAsset {
+  const uploaded = file?.response?.data?.files?.[0];
+  const assetPath = uploaded?.assetPath ?? uploaded?.url ?? file?.url ?? "";
+  return {
+    assetPath,
+    assetType: inferAssetType(file, assetPath),
+    sortOrder
+  };
+}
 
 export function useTask() {
   const dataList = ref([]);
@@ -78,10 +99,16 @@ export function useTask() {
 
   function openDialog(title = "新增", row?: FormItemProps) {
     console.log("row", row);
-    const imageList = row?.assets?.map(item => ({
-      url: item?.assetPath,
-      name: item?.assetId
-    })) ?? [];
+    const imageList = [...(row?.assets ?? [])]
+      .sort((left, right) => {
+        const orderDifference = (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
+        return orderDifference || String(left.assetId ?? "").localeCompare(String(right.assetId ?? ""));
+      })
+      .map(item => ({
+        url: item.assetPath,
+        name: String(item.meta?.originalName ?? item.assetId ?? item.assetPath),
+        assetType: item.assetType === "video" ? "video" : "image"
+      }));
     addDialog({
       title: `${title}任务`,
       props: {
@@ -113,17 +140,11 @@ export function useTask() {
         FormRef.validate(async valid => {
           if (valid) {
             console.log("curData", curData);
-            const reqData = {
+            const reqData: CreateTaskRequest = {
               productId: curData.productId,
               promptText: curData.promptText,
               duration: curData.duration,
-              imageList: curData.imageList.map(item => {
-                if (item && item?.response && item?.response?.data) {
-                  return item?.response?.data?.urls[0];
-                } else {
-                  return item?.url;
-                }
-              }),
+              assets: curData.imageList.map(toCreateTaskAsset)
             };
             // 表单规则校验通过
             if (title === "新增") {

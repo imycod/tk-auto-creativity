@@ -2,7 +2,7 @@
 import { UploadModule } from '../upload/upload.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 // import { TkCoreModule } from '../tk-core';
-import { Task, TaskQueue, Video } from '../entities';
+import { Task, TaskAsset, TaskQueue, Video } from '../entities';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
 // import { VideoQueueConsumer } from './queue.consumer';
@@ -11,7 +11,7 @@ import { TasksService } from './tasks.service';
 @Module({
   imports: [
     UploadModule,
-    TypeOrmModule.forFeature([Task, TaskQueue, Video]),
+    TypeOrmModule.forFeature([Task, TaskAsset, TaskQueue, Video]),
     // TkCoreModule,
   ],
   controllers: [TasksController],

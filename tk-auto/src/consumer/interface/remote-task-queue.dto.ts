@@ -17,8 +17,11 @@ export interface RemoteTaskQueue {
     promptText: string;
     duration?: number;
     assets: Array<{
-      assetType: string;
+      assetId: number;
+      assetType: 'image' | 'video';
       assetPath: string;
-    }>
-  }
+      sortOrder?: number;
+      meta?: unknown;
+    }>;
+  };
 }

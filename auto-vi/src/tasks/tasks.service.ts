@@ -2,17 +2,23 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Task } from '../entities/task.entity';
-import { CreateTaskDto } from './dto/create-task.dto';
+import { CreateTaskAssetDto, CreateTaskDto } from './dto/create-task.dto';
 import { FindAllTaskDto } from './dto/find-all-task.dto';
-import { TaskAsset } from 'src/entities/task-asset.entity';
-import { TaskQueue } from 'src/entities/task-queue.entity';
-import { Video } from 'src/entities/video.entity';
+import { TaskAsset } from '../entities/task-asset.entity';
+import { TaskQueue } from '../entities/task-queue.entity';
+import { Video } from '../entities/video.entity';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { UploadPathService } from '../upload/upload-path.service';
-import { rewriteUploadImageUrl } from '../upload/resolve-upload-path.util';
 import { FindAllTaskQueueDto } from '../tasks-queue/dto/find-all-task-queue.dto';
 import { UpdateTaskQueueDto } from '../tasks-queue/dto/update-task-queue.dto';
 // import { VideoDownloader } from './video.downloader';
+
+interface NormalizedTaskAsset {
+  assetType: 'image' | 'video';
+  assetPath: string;
+  sortOrder: number;
+  meta?: string;
+}
 
 @Injectable()
 export class TasksService {
@@ -29,24 +35,13 @@ export class TasksService {
   ) { }
 
   async create(dto: CreateTaskDto): Promise<Task> {
-    // 鍒涘缓浜嬪姟锛氫换鍔″叆搴撱€佽祫浜у叆搴撱€佷换鍔￠槦鍒楀叆搴擄紝涓変欢浜嬪繀椤诲師瀛愭彁锟?
-    let imageList = dto.imageList;
-    if (imageList?.length) {
-      try {
-        imageList = await this.uploadPathService.resolveImageListForStorage(imageList);
-        imageList = imageList.map((assetPath) =>
-          rewriteUploadImageUrl(assetPath),
-        );
-      } catch (err) {
-        throw new BadRequestException((err as Error).message || '图片路径无效');
-      }
-    }
+    const assets = await this.normalizeAssets(dto);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
-      // 1. 浠诲姟鍏ュ簱锛屾柊鍒涘缓浠诲姟榛樿 status 锟?pending
+      // 1. 任务入库，新创建任务默认 status = pending
       const task = await queryRunner.manager.save(Task, {
         promptText: dto.promptText,
         productId: dto.productId,
@@ -56,19 +51,20 @@ export class TasksService {
       });
       const taskId = task.taskId;
 
-      // 2. 濡傛灉浼犲叆锟?imageList 涓旈暱搴﹀ぇ锟?0锛屽垯涓鸿浠诲姟鍒涘缓瀵瑰簲鐨勮祫锟?
-      //    涓€锟?task 瀵瑰簲澶氭潯 asset锛宎ssetType 榛樿锟?image
-      if (imageList && imageList.length > 0) {
-        const assets = imageList.map((assetPath, index) => ({
-          taskId,
-          assetType: 'image' as const,
-          assetPath,
-          sortOrder: index,
-        }));
-        await queryRunner.manager.save(TaskAsset, assets);
+      if (assets.length > 0) {
+        await queryRunner.manager.save(
+          TaskAsset,
+          assets.map((asset) => ({
+            taskId,
+            assetType: asset.assetType,
+            assetPath: asset.assetPath,
+            sortOrder: asset.sortOrder,
+            meta: asset.meta,
+          })),
+        );
       }
 
-      // 3. 浠诲姟鑷姩鍔犲叆浠诲姟闃熷垪锛屼互 taskId 浣滀负鍏宠仈
+      // 3. 任务自动加入任务队列，以 taskId 作为关联
       await queryRunner.manager.save(TaskQueue, {
         taskId,
         stage: 'init',
@@ -76,10 +72,10 @@ export class TasksService {
       });
 
       await queryRunner.commitTransaction();
-      return task;
+      return this.findOne(taskId);
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      this.logger.error(`鍒涘缓浠诲姟澶辫触: ${(error as Error).message}`);
+      this.logger.error(`创建任务失败: ${(error as Error).message}`);
       throw error;
     } finally {
       await queryRunner.release();
@@ -90,7 +86,6 @@ export class TasksService {
     const { taskId, status, productId, promptText, updatedSince, currentPage = 1, pageSize = 10, sortField, sortOrder } = dto;
 
     const query = this.tasksRepository.createQueryBuilder('task');
-    // 闇€瑕佹妸asset涔熸煡璇㈠嚭锟?
     query.leftJoinAndSelect('task.assets', 'assets');
     query.leftJoinAndSelect('task.queues', 'queues');
     if (productId) {
@@ -114,10 +109,8 @@ export class TasksService {
       );
     }
 
-    // 璁＄畻鎬绘暟
     const total = await query.getCount();
 
-    // 鍒嗛〉鏌ヨ锛堟寜鍒涘缓鏃堕棿鍊掑簭锛屽垪琛ㄩ『搴忕ǔ瀹氾級
     const allowedFields = ['taskId', 'createdAt'] as const;
     const sortColumn = allowedFields.includes(sortField as any)
       ? sortField
@@ -125,9 +118,13 @@ export class TasksService {
     const sortDirection = sortOrder === 'asc' ? 'ASC' : 'DESC';
     const list = await query
       .orderBy(`task.${sortColumn}`, sortDirection)
+      .addOrderBy('assets.sortOrder', 'ASC')
+      .addOrderBy('assets.assetId', 'ASC')
       .skip((currentPage - 1) * pageSize)
       .take(pageSize)
       .getMany();
+
+    list.forEach((task) => this.sortAssets(task));
 
     return {
       list,
@@ -147,6 +144,7 @@ export class TasksService {
       throw new NotFoundException(`Task ${taskId} not found`);
     }
 
+    this.sortAssets(task);
     return task;
   }
 
@@ -164,17 +162,14 @@ export class TasksService {
     try {
 
       await this.dataSource.transaction(async (manager) => {
-        // 鍒犻櫎浠诲姟闃熷垪
         await manager.delete(TaskQueue, { taskId });
-        // 鍒犻櫎璧勪骇
         await manager.delete(TaskAsset, { taskId });
-        // 鍒犻櫎浠诲姟
         await manager.delete(Task, { taskId });
       });
 
       await queryRunner.commitTransaction();
     } catch (error) {
-      this.logger.error(`鍒犻櫎浠诲姟澶辫触: ${(error as Error).message}`);
+      this.logger.error(`删除任务失败: ${(error as Error).message}`);
       throw error;
     } finally {
       await queryRunner.release();
@@ -182,8 +177,7 @@ export class TasksService {
   }
 
   /**
-   * 閲嶆柊鐢熸垚锛氶噸缃换鍔″強鍏宠仈闃熷垪琛ㄣ€佽棰戣褰曪紝锟?tk-auto 閲嶆柊棰嗗彇澶勭悊锟?
-   * 璧勪骇锛堝弬鑰冨浘锛変繚鎸佷笉鍙橈拷?
+   * Regenerate the task and its queue/video state while preserving media assets.
    */
   async regenerate(taskId: number): Promise<Task> {
     const task = await this.tasksRepository.findOne({
@@ -232,7 +226,7 @@ export class TasksService {
       return this.findOne(taskId);
     } catch (error) {
       await queryRunner.rollbackTransaction();
-      this.logger.error(`閲嶆柊鐢熸垚浠诲姟澶辫触: ${(error as Error).message}`);
+      this.logger.error(`重新生成任务失败: ${(error as Error).message}`);
       throw error;
     } finally {
       await queryRunner.release();
@@ -246,7 +240,6 @@ export class TasksService {
     if (!task) {
       throw new NotFoundException(`Task ${taskId} not found`);
     }
-    // 浠呮洿鏂版湰娆¤姹傚疄闄呮惡甯︾殑瀛楁锛岄伩鍏嶆妸鏈紶瀛楁锛堝 promptText锛夎鐩栦负 undefined
     if (dto.promptText !== undefined) {
       task.promptText = dto.promptText;
     }
@@ -259,5 +252,65 @@ export class TasksService {
     return await this.tasksRepository.save(task);
   }
 
-}
+  private async normalizeAssets(dto: CreateTaskDto): Promise<NormalizedTaskAsset[]> {
+    const hasAssets = (dto.assets?.length ?? 0) > 0;
+    const hasImageList = (dto.imageList?.length ?? 0) > 0;
 
+    if (hasAssets && hasImageList) {
+      throw new BadRequestException('assets and imageList cannot both be provided');
+    }
+
+    // assets is the primary mixed-media contract; imageList remains for legacy image tasks.
+    const incomingAssets: CreateTaskAssetDto[] = hasAssets
+      ? dto.assets!
+      : (dto.imageList ?? []).map((assetPath, index) => ({
+          assetType: 'image' as const,
+          assetPath,
+          sortOrder: index,
+        }));
+
+    if (!incomingAssets.length) {
+      throw new BadRequestException('At least one media asset is required');
+    }
+    if (incomingAssets.length > 10) {
+      throw new BadRequestException('No more than 10 media assets are allowed');
+    }
+
+    const normalized = await Promise.all(
+      incomingAssets.map(async (asset, index) => {
+        const assetType = asset.assetType;
+        if (assetType !== 'image' && assetType !== 'video') {
+          throw new BadRequestException('assetType must be image or video');
+        }
+        const sortOrder = asset.sortOrder ?? index;
+        if (!Number.isInteger(sortOrder) || sortOrder < 0) {
+          throw new BadRequestException('sortOrder must be a non-negative integer');
+        }
+        try {
+          return {
+            assetType,
+            assetPath: await this.uploadPathService.resolveMediaForStorage(
+              asset.assetPath,
+              assetType,
+            ),
+            sortOrder,
+            meta: asset.meta === undefined ? undefined : JSON.stringify(asset.meta),
+            originalIndex: index,
+          };
+        } catch (err) {
+          throw new BadRequestException((err as Error).message || '素材路径无效');
+        }
+      }),
+    );
+
+    return normalized
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.originalIndex - b.originalIndex)
+      .map(({ originalIndex: _originalIndex, ...asset }) => asset);
+  }
+
+  private sortAssets(task: Task): void {
+    task.assets = [...(task.assets ?? [])].sort(
+      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.assetId ?? 0) - (b.assetId ?? 0),
+    );
+  }
+}

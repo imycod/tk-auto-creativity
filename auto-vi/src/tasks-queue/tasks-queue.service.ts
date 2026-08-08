@@ -162,6 +162,12 @@ export class TasksQueueService implements OnModuleInit {
       status: 'processing',
     });
 
+    if (queueItem.task?.assets) {
+      queueItem.task.assets = [...queueItem.task.assets].sort(
+        (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.assetId ?? 0) - (b.assetId ?? 0),
+      );
+    }
+
     queueItem.status = 'processing';
     queueItem.stage = 'rendering';
     queueItem.workerId = workerId;

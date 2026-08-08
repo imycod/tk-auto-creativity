@@ -53,6 +53,7 @@ const wrapperEnv = (envConf: Recordable): ViteEnv => {
   const ret: ViteEnv = {
     VITE_PORT: 8848,
     VITE_UPLOAD_IMAGE_URL: "",
+    VITE_UPLOAD_MEDIA_URL: "",
     VITE_PUBLIC_PATH: "",
     VITE_ROUTER_HISTORY: "",
     VITE_CDN: false,

@@ -4,8 +4,9 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 
+import { createHash } from 'crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { basename, join } from 'path';
+import { extname, join } from 'path';
 
 import { BrowserService } from '../core/browser/browser.service';
 import {
@@ -17,13 +18,83 @@ import {
   promptMatches,
   setCreativeStudioDuration,
   submitCreativeStudioPrompt,
-  uploadImagesToCreativeStudio,
+  uploadMediaToCreativeStudio,
 } from '../core/browser/creative-studio.helper';
 import { RemoteTaskQueue } from './interface/remote-task-queue.dto';
 import { ConsumerSchedulerService } from './consumer-scheduler.service';
 
-const CREATIVE_STUDIO_URL = "https://ads.tiktok.com/creative/creativestudio/image-to-video"
+const CREATIVE_STUDIO_URL =
+  'https://ads.tiktok.com/creative/creativestudio/image-to-video';
 const SUBMIT_SLOT_FULL = 'SUBMIT_SLOT_FULL';
+
+export type MediaAsset = RemoteTaskQueue['task']['assets'][number];
+
+export function sortAndValidateMediaAssets(assets: MediaAsset[]): MediaAsset[] {
+  return assets
+    .map((asset, index) => {
+      if (asset.assetType !== 'image' && asset.assetType !== 'video') {
+        throw new Error(`不支持的素材类型: ${String(asset.assetType)}`);
+      }
+      if (!asset.assetPath) {
+        throw new Error(`素材 ${asset.assetId} 缺少访问路径`);
+      }
+      return { asset, index };
+    })
+    .sort((left, right) => {
+      const order = (left.asset.sortOrder ?? 0) - (right.asset.sortOrder ?? 0);
+      if (order !== 0) return order;
+      const id = left.asset.assetId - right.asset.assetId;
+      return id !== 0 ? id : left.index - right.index;
+    })
+    .map(({ asset }) => asset);
+}
+
+const CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'video/x-msvideo': '.avi',
+  'video/x-matroska': '.mkv',
+};
+
+const MEDIA_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.gif',
+  '.mp4',
+  '.mov',
+  '.webm',
+  '.avi',
+  '.mkv',
+]);
+
+export function inferMediaExtension(
+  url: string,
+  contentType: string | undefined,
+  assetType: MediaAsset['assetType'],
+): string {
+  const extension = extname(
+    decodeURIComponent(new URL(url).pathname),
+  ).toLowerCase();
+  if (MEDIA_EXTENSIONS.has(extension)) return extension;
+  const mime = contentType?.split(';', 1)[0].trim().toLowerCase();
+  return (
+    (mime && CONTENT_TYPE_EXTENSIONS[mime]) ||
+    (assetType === 'video' ? '.mp4' : '.jpg')
+  );
+}
+
+function headerValue(value: unknown): string | undefined {
+  if (Array.isArray(value))
+    return value[0] == null ? undefined : String(value[0]);
+  return value == null ? undefined : String(value);
+}
 
 @Injectable()
 export class ConsumerService {
@@ -41,9 +112,10 @@ export class ConsumerService {
   ) {
     this.autoViApiUrl = this.configService.get('AUTO_VI_API_URL') as string;
     const configured = Number(this.configService.get('MAX_BROWSERS'));
-    this.maxBrowsers = Number.isFinite(configured) && configured > 0
-      ? Math.min(configured, 10)
-      : 5;
+    this.maxBrowsers =
+      Number.isFinite(configured) && configured > 0
+        ? Math.min(configured, 10)
+        : 5;
   }
 
   @Interval(2 * 60 * 1000)
@@ -56,9 +128,14 @@ export class ConsumerService {
     this.logger.log('开始轮询任务队列...');
 
     try {
-      const { data: response } = await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks-queue/with-statuss`, {
-        statuss: ['pending', 'retrying'],
-      }));
+      const { data: response } = await firstValueFrom(
+        this.httpService.post(
+          `${this.autoViApiUrl}/api/tasks-queue/with-statuss`,
+          {
+            statuss: ['pending', 'retrying'],
+          },
+        ),
+      );
 
       const pendingCount = response.data;
 
@@ -79,7 +156,6 @@ export class ConsumerService {
           this.runWorker(profileIndex),
         ),
       );
-
     } catch (error) {
       this.logger.error(`轮询异常: ${(error as Error).message}`);
     } finally {
@@ -106,7 +182,9 @@ export class ConsumerService {
     workerId: string,
     profileIndex: number,
   ): Promise<RemoteTaskQueue | null> {
-    const run = this.claimChain.then(() => this.doClaim(workerId, profileIndex));
+    const run = this.claimChain.then(() =>
+      this.doClaim(workerId, profileIndex),
+    );
     this.claimChain = run.catch(() => undefined);
     return run;
   }
@@ -115,10 +193,12 @@ export class ConsumerService {
     workerId: string,
     profileIndex: number,
   ): Promise<RemoteTaskQueue | null> {
-    const { data: response } = await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks-queue/claim`, {
-      workerId,
-      profileIndex,
-    }));
+    const { data: response } = await firstValueFrom(
+      this.httpService.post(`${this.autoViApiUrl}/api/tasks-queue/claim`, {
+        workerId,
+        profileIndex,
+      }),
+    );
 
     return response.data as RemoteTaskQueue;
   }
@@ -133,23 +213,26 @@ export class ConsumerService {
       this.logger.log(
         `[worker-${profileIndex}] 开始处理任务 ${taskId}，prompt: ${task.promptText}`,
       );
-      const imagePaths = task.assets
-        ?.filter((a) => a.assetType === 'image')
-        .map((a) => a.assetPath);
+      const media = sortAndValidateMediaAssets(task.assets ?? []);
 
       await this.generateVideoWithBrowser(
         taskId,
         task.promptText,
-        imagePaths,
+        media,
         profileIndex,
         task.duration,
       );
 
-      await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
-        status: 'submitted',
-        stage: 'rendering',
-        profileIndex,
-      }));
+      await firstValueFrom(
+        this.httpService.patch(
+          `${this.autoViApiUrl}/api/tasks-queue/${queueId}`,
+          {
+            status: 'submitted',
+            stage: 'rendering',
+            profileIndex,
+          },
+        ),
+      );
 
       this.logger.log(
         `[worker-${profileIndex}] 任务 ${taskId} 已提交生成，等待下载`,
@@ -160,17 +243,27 @@ export class ConsumerService {
 
       if (message.includes(SUBMIT_SLOT_FULL)) {
         try {
-          await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
-            status: 'pending',
-            stage: 'init',
-            workerId: null,
-            profileIndex: null,
-            errorMessage: '浏览器并发已满，等待槽位释放后重试',
-          }));
+          await firstValueFrom(
+            this.httpService.patch(
+              `${this.autoViApiUrl}/api/tasks-queue/${queueId}`,
+              {
+                status: 'pending',
+                stage: 'init',
+                workerId: null,
+                profileIndex: null,
+                errorMessage: '浏览器并发已满，等待槽位释放后重试',
+              },
+            ),
+          );
 
-          await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
-            status: 'pending',
-          }));
+          await firstValueFrom(
+            this.httpService.post(
+              `${this.autoViApiUrl}/api/tasks/update/${taskId}`,
+              {
+                status: 'pending',
+              },
+            ),
+          );
         } catch (reportError) {
           this.logger.error(
             `[worker-${profileIndex}] 任务 ${taskId} 槽位满退回失败: ${(reportError as Error).message}`,
@@ -208,17 +301,27 @@ export class ConsumerService {
               `[worker-${profileIndex}] 任务 ${taskId} 调度改派异常: ${(scheduleError as Error).message}`,
             );
             try {
-              await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
-                status: 'failed',
-                stage: 'rendering',
-                profileIndex,
-                errorMessage: message,
-                completedAt: new Date().toISOString(),
-                retryCount: (queueItem.retryCount || 0) + 1,
-              }));
-              await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
-                status: 'failed',
-              }));
+              await firstValueFrom(
+                this.httpService.patch(
+                  `${this.autoViApiUrl}/api/tasks-queue/${queueId}`,
+                  {
+                    status: 'failed',
+                    stage: 'rendering',
+                    profileIndex,
+                    errorMessage: message,
+                    completedAt: new Date().toISOString(),
+                    retryCount: (queueItem.retryCount || 0) + 1,
+                  },
+                ),
+              );
+              await firstValueFrom(
+                this.httpService.post(
+                  `${this.autoViApiUrl}/api/tasks/update/${taskId}`,
+                  {
+                    status: 'failed',
+                  },
+                ),
+              );
             } catch (reportError) {
               this.logger.error(
                 `[worker-${profileIndex}] 任务 ${taskId} 失败状态回写失败: ${(reportError as Error).message}`,
@@ -230,17 +333,27 @@ export class ConsumerService {
 
         // 未达改派阈值：标记 retrying，保留给后续领取（含其他 worker）
         try {
-          await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
-            status: 'retrying',
-            stage: 'rendering',
-            profileIndex,
-            errorMessage: message,
-            completedAt: new Date().toISOString(),
-            retryCount: (queueItem.retryCount || 0) + 1,
-          }));
-          await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
-            status: 'retrying',
-          }));
+          await firstValueFrom(
+            this.httpService.patch(
+              `${this.autoViApiUrl}/api/tasks-queue/${queueId}`,
+              {
+                status: 'retrying',
+                stage: 'rendering',
+                profileIndex,
+                errorMessage: message,
+                completedAt: new Date().toISOString(),
+                retryCount: (queueItem.retryCount || 0) + 1,
+              },
+            ),
+          );
+          await firstValueFrom(
+            this.httpService.post(
+              `${this.autoViApiUrl}/api/tasks/update/${taskId}`,
+              {
+                status: 'retrying',
+              },
+            ),
+          );
         } catch (reportError) {
           this.logger.error(
             `[worker-${profileIndex}] 任务 ${taskId} 可改派错误回写失败: ${(reportError as Error).message}`,
@@ -255,18 +368,28 @@ export class ConsumerService {
       const isFinalFailure = queueItem.retryCount >= 2;
 
       try {
-        await firstValueFrom(this.httpService.patch(`${this.autoViApiUrl}/api/tasks-queue/${queueId}`, {
-          status: isFinalFailure ? 'failed' : 'retrying',
-          stage: 'rendering',
-          profileIndex,
-          errorMessage: message,
-          completedAt: new Date().toISOString(),
-          retryCount: (queueItem.retryCount || 0) + 1,
-        }));
+        await firstValueFrom(
+          this.httpService.patch(
+            `${this.autoViApiUrl}/api/tasks-queue/${queueId}`,
+            {
+              status: isFinalFailure ? 'failed' : 'retrying',
+              stage: 'rendering',
+              profileIndex,
+              errorMessage: message,
+              completedAt: new Date().toISOString(),
+              retryCount: (queueItem.retryCount || 0) + 1,
+            },
+          ),
+        );
 
-        await firstValueFrom(this.httpService.post(`${this.autoViApiUrl}/api/tasks/update/${taskId}`, {
-          status: isFinalFailure ? 'failed' : 'retrying',
-        }));
+        await firstValueFrom(
+          this.httpService.post(
+            `${this.autoViApiUrl}/api/tasks/update/${taskId}`,
+            {
+              status: isFinalFailure ? 'failed' : 'retrying',
+            },
+          ),
+        );
       } catch (reportError) {
         this.logger.error(
           `[worker-${profileIndex}] 任务 ${taskId} 失败状态回写失败: ${(reportError as Error).message}`,
@@ -283,18 +406,20 @@ export class ConsumerService {
   private async generateVideoWithBrowser(
     taskId: number,
     promptText: string,
-    imagePaths: string[] | undefined,
+    media: MediaAsset[],
     profileIndex: number,
     duration?: number,
   ): Promise<void> {
-
     const page = await this.browserService.createPage({
       headless: false,
       profileIndex,
     });
 
     if (!page.url().includes('/creative/creativestudio/image-to-video')) {
-      await page.goto(this.configService.get<string>('CREATIVE_STUDIO_URL') ?? CREATIVE_STUDIO_URL);
+      await page.goto(
+        this.configService.get<string>('CREATIVE_STUDIO_URL') ??
+          CREATIVE_STUDIO_URL,
+      );
       await page.waitForLoadState('networkidle');
     }
 
@@ -305,11 +430,11 @@ export class ConsumerService {
     await ensureChatboxExpanded(page);
     await clearCreativeStudioInputs(page);
 
-    if (imagePaths?.length) {
-      const localPaths = await this.resolveImagePaths(imagePaths, profileIndex);
-      await uploadImagesToCreativeStudio(page, localPaths);
+    if (media.length) {
+      const localPaths = await this.resolveMediaPaths(media, profileIndex);
+      await uploadMediaToCreativeStudio(page, localPaths);
       this.logger.log(
-        `[worker-${profileIndex}] 任务 ${taskId} 已上传 ${localPaths.length} 张图片`,
+        `[worker-${profileIndex}] 任务 ${taskId} 已上传 ${localPaths.length} 个素材`,
       );
     }
 
@@ -325,7 +450,7 @@ export class ConsumerService {
     );
 
     const credits = await assertEnoughCreditsForDuration(page, durationSeconds);
-  
+
     this.logger.log(
       `[worker-${profileIndex}] 任务 ${taskId} 积分校验通过：当前 ${credits}`,
     );
@@ -400,54 +525,59 @@ export class ConsumerService {
     }
   }
 
-  private async resolveImagePaths(
-    imagePaths: string[],
+  private async resolveMediaPaths(
+    media: MediaAsset[],
     profileIndex: number,
   ): Promise<string[]> {
     const tmpDir = join(
       process.cwd(),
       'data',
-      'tmp-images',
+      'tmp-media',
       `profile-${profileIndex}`,
     );
     mkdirSync(tmpDir, { recursive: true });
 
     const localPaths: string[] = [];
-    for (const raw of imagePaths) {
+    for (const asset of media) {
+      const raw = asset.assetPath;
       if (existsSync(raw)) {
         localPaths.push(raw);
         continue;
       }
 
       if (raw.startsWith('http://') || raw.startsWith('https://')) {
-        localPaths.push(await this.downloadImageToTmp(raw, tmpDir));
+        localPaths.push(await this.downloadMediaToTmp(asset, tmpDir));
         continue;
       }
 
-      throw new Error(`图片文件不存在或无法访问: ${raw}`);
+      throw new Error(`素材文件不存在或无法访问: ${raw}`);
     }
 
     return localPaths;
   }
 
-  private async downloadImageToTmp(url: string, tmpDir: string): Promise<string> {
-    const rawName =
-      decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '') ||
-      `img-${Date.now()}`;
-    const dest = join(tmpDir, basename(rawName));
-
+  private async downloadMediaToTmp(
+    asset: MediaAsset,
+    tmpDir: string,
+  ): Promise<string> {
+    const { assetPath: url, assetType, assetId } = asset;
     try {
-      const { data } = await firstValueFrom(
+      const { data, headers } = await firstValueFrom(
         this.httpService.get<ArrayBuffer>(url, {
           responseType: 'arraybuffer',
         }),
       );
+      const extension = inferMediaExtension(
+        url,
+        headerValue(headers?.['content-type']),
+        assetType,
+      );
+      const hash = createHash('sha256').update(url).digest('hex').slice(0, 12);
+      const dest = join(tmpDir, `${assetType}-${assetId}-${hash}${extension}`);
       writeFileSync(dest, Buffer.from(data));
       return dest;
     } catch (error) {
-      throw new Error(
-        `下载参考图失败: ${url} - ${(error as Error).message}`,
-      );
+      throw new Error(`下载素材失败: ${url} - ${(error as Error).message}`);
     }
   }
 }

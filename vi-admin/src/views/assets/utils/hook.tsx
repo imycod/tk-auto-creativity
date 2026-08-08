@@ -54,7 +54,9 @@ export function useAssets() {
     {
       label: "资产路径",
       prop: "assetPath",
-      cellRenderer: ({ index, row }) => (
+      cellRenderer: ({ row }) => row.assetType === "video" ? (
+        <video src={row.assetPath} controls muted class="size-25 object-cover" />
+      ) : (
         <el-image
           preview-teleported
           loading="lazy"
@@ -62,7 +64,6 @@ export function useAssets() {
           fit="cover"
           class="size-25"
           preview-src-list={[row.assetPath]}
-          initial-index={index}
         />
       )
     },

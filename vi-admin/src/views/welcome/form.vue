@@ -5,14 +5,18 @@ import { FormProps } from "./types";
 import { message } from "@/utils/message";
 import { UploadFile } from "element-plus";
 
-const VITE_UPLOAD_IMAGE_URL = import.meta.env.VITE_UPLOAD_IMAGE_URL as unknown as string;
+const VITE_UPLOAD_MEDIA_URL =
+  (import.meta.env.VITE_UPLOAD_MEDIA_URL as unknown as string) ||
+  (import.meta.env.VITE_UPLOAD_IMAGE_URL as unknown as string);
 
 import EpPlus from "~icons/ep/plus?width=30&height=30";
 import Eye from "~icons/ri/eye-line";
 import Delete from "~icons/ri/delete-bin-7-line";
 
-/** 最多可上传的图片数量 */
-const MAX_IMAGE_COUNT = 10;
+const MAX_MEDIA_COUNT = 10;
+const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+const VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
+const ACCEPT_MEDIA = [...IMAGE_TYPES, ...VIDEO_TYPES].join(",");
 
 const props = withDefaults(defineProps<FormProps>(), {
   formInline: () => ({
@@ -29,24 +33,24 @@ const newFormInline = ref(props.formInline);
 const curOpenImgIndex = ref(0);
 const dialogVisible = ref(false);
 
-/** 预览图片地址列表 */
 const previewUrlList = computed(() =>
-  newFormInline.value.imageList.map(img => img.url).filter(Boolean)
+  newFormInline.value.imageList
+    .filter(item => getUploadAssetType(item) === "image")
+    .map(img => getUploadUrl(img))
+    .filter(Boolean)
 );
 
 function getRef() {
   return ruleFormRef.value;
 }
 
-/** 超出最大上传数时触发 */
 const onExceed = () => {
-  message(`最多上传${MAX_IMAGE_COUNT}张图片，请先删除后再上传`);
+  message(`最多上传${MAX_MEDIA_COUNT}个素材，请先删除后再上传`);
 };
 
-/** 移除上传的文件 */
 const handleRemove = (file: UploadFile) => {
   const index = newFormInline.value.imageList.findIndex(
-    (item) => item.uid === file.uid || item.url === file.url
+    item => item.uid === file.uid || item.url === file.url
   );
   if (index !== -1) {
     newFormInline.value.imageList.splice(index, 1);
@@ -54,11 +58,9 @@ const handleRemove = (file: UploadFile) => {
   ruleFormRef.value?.validateField("imageList").catch(() => undefined);
 };
 
-/** 图片边长限制（宽、高均需满足） */
 const MIN_IMAGE_PX = 300;
 const MAX_IMAGE_PX = 6000;
 
-/** 读取本地图片宽高 */
 function readImageSize(file: File): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -77,15 +79,24 @@ function readImageSize(file: File): Promise<{ width: number; height: number }> {
   });
 }
 
-/** 上传文件前校验 */
 const onBefore = async (file: File) => {
-  if (!["image/jpeg", "image/png", "image/gif", "image/webp"].includes(file.type)) {
-    message("只能上传图片");
+  const isImage = IMAGE_TYPES.includes(file.type);
+  const isVideo = VIDEO_TYPES.includes(file.type);
+  if (!isImage && !isVideo) {
+    message("只能上传图片或视频");
     return false;
   }
-  const isExceed = file.size / 1024 / 1024 > 2;
-  if (isExceed) {
-    message(`单个图片大小不能超过2MB`);
+
+  if (isVideo) {
+    if (file.size / 1024 / 1024 > 100) {
+      message("视频太大，单个视频不能超过100MB", { type: "warning" });
+      return false;
+    }
+    return true;
+  }
+
+  if (file.size / 1024 / 1024 > 2) {
+    message("单个图片大小不能超过2MB");
     return false;
   }
 
@@ -98,7 +109,7 @@ const onBefore = async (file: File) => {
       height > MAX_IMAGE_PX
     ) {
       message(
-        `图片尺寸需在 ${MIN_IMAGE_PX}px–${MAX_IMAGE_PX}px 之间（当前 ${width}×${height}）`,
+        `图片尺寸需在${MIN_IMAGE_PX}px-${MAX_IMAGE_PX}px之间（当前${width}×${height}）`,
         { type: "warning" }
       );
       return false;
@@ -111,21 +122,39 @@ const onBefore = async (file: File) => {
   return true;
 };
 
-/** 大图预览 */
 const handlePictureCardPreview = (file: UploadFile) => {
-  const index = previewUrlList.value.findIndex(url => url === file.url);
+  if (getUploadAssetType(file) !== "image") return;
+  const fileUrl = getUploadUrl(file);
+  const index = previewUrlList.value.findIndex(url => url === fileUrl);
   curOpenImgIndex.value = index === -1 ? 0 : index;
   dialogVisible.value = true;
 };
 
-
 const handleUploadSuccess = (response: any, file: UploadFile) => {
- if (response?.code !== 200 || !response.data?.urls?.length) {
-    message('上传响应异常', { type: 'error' });
+  const uploaded = response?.data?.files?.[0];
+  const legacyUrl = response?.data?.urls?.[0];
+  if (response?.code !== 200 || (!uploaded?.url && !legacyUrl)) {
+    message("上传响应异常", { type: "error" });
     return;
   }
+  file.url = uploaded?.url ?? legacyUrl;
+  (file as any).assetType = uploaded?.assetType ?? inferAssetType(file.url || file.name);
   ruleFormRef.value?.validateField("imageList").catch(() => undefined);
 };
+
+function getUploadUrl(file: any): string {
+  return file?.response?.data?.files?.[0]?.url ?? file?.response?.data?.urls?.[0] ?? file?.url ?? "";
+}
+
+function inferAssetType(input = ""): "image" | "video" {
+  return /\.(mp4|webm|mov)(\?|#|$)/i.test(input) || /\/videos\//i.test(input)
+    ? "video"
+    : "image";
+}
+
+function getUploadAssetType(file: any): "image" | "video" {
+  return file?.assetType ?? file?.response?.data?.files?.[0]?.assetType ?? inferAssetType(getUploadUrl(file) || file?.name);
+}
 
 defineExpose({ getRef });
 </script>
@@ -163,81 +192,89 @@ defineExpose({ getRef });
       />
       <span class="ml-2 text-gray-500">秒（4-15）</span>
     </el-form-item>
-    <el-form-item label="文件" prop="imageList">
-       <el-upload
-          v-model:file-list="newFormInline.imageList"
-          drag
-          multiple
-          class="pure-upload"
-          list-type="picture-card"
-          accept="image/jpeg,image/png,image/gif,image/webp"
-          :action="VITE_UPLOAD_IMAGE_URL"
-          :limit="MAX_IMAGE_COUNT"
-          :headers="{ Authorization: 'eyJhbGciOiJIUzUxMiJ9.admin' }"
-          :on-exceed="onExceed"
-          :before-upload="onBefore"
-          :on-success="handleUploadSuccess"
-          :on-remove="handleRemove"
-        >
-          <EpPlus class="m-auto mt-4" />
-          <template #file="{ file }">
-            <div
-              v-if="file.status == 'ready' || file.status == 'uploading'"
-              class="mt-[35%]! m-auto"
+    <el-form-item label="素材" prop="imageList">
+      <el-upload
+        v-model:file-list="newFormInline.imageList"
+        drag
+        multiple
+        class="pure-upload"
+        list-type="picture-card"
+        :accept="ACCEPT_MEDIA"
+        :action="VITE_UPLOAD_MEDIA_URL"
+        :limit="MAX_MEDIA_COUNT"
+        :headers="{ Authorization: 'eyJhbGciOiJIUzUxMiJ9.admin' }"
+        :on-exceed="onExceed"
+        :before-upload="onBefore"
+        :on-success="handleUploadSuccess"
+        :on-remove="handleRemove"
+      >
+        <EpPlus class="m-auto mt-4" />
+        <template #file="{ file }">
+          <div
+            v-if="file.status == 'ready' || file.status == 'uploading'"
+            class="mt-[35%]! m-auto"
+          >
+            <p class="font-medium">文件上传中</p>
+            <el-progress
+              class="mt-2!"
+              :stroke-width="2"
+              :text-inside="true"
+              :show-text="false"
+              :percentage="file.percentage"
+            />
+          </div>
+          <div v-else>
+            <img
+              v-if="getUploadAssetType(file) === 'image'"
+              class="el-upload-list__item-thumbnail select-none"
+              :src="getUploadUrl(file)"
+            />
+            <video
+              v-else
+              class="el-upload-list__item-thumbnail select-none"
+              :src="getUploadUrl(file)"
+              controls
+              muted
+            />
+            <span
+              id="pure-upload-item"
+              :class="[
+                'el-upload-list__item-actions',
+                newFormInline.imageList.length > 1 && 'cursor-move!'
+              ]"
             >
-              <p class="font-medium">文件上传中</p>
-              <el-progress
-                class="mt-2!"
-                :stroke-width="2"
-                :text-inside="true"
-                :show-text="false"
-                :percentage="file.percentage"
-              />
-            </div>
-            <div v-else>
-              <img
-                class="el-upload-list__item-thumbnail select-none"
-                :src="file.url"
-              />
               <span
-                id="pure-upload-item"
-                :class="[
-                  'el-upload-list__item-actions',
-                  newFormInline.imageList.length > 1 && 'cursor-move!'
-                ]"
+                v-if="getUploadAssetType(file) === 'image'"
+                title="查看"
+                class="hover:text-primary"
+                @click="handlePictureCardPreview(file)"
               >
-                <span
-                  title="查看"
-                  class="hover:text-primary"
-                  @click="handlePictureCardPreview(file)"
-                >
+                <IconifyIconOffline
+                  :icon="Eye"
+                  class="hover:scale-125 duration-100"
+                />
+              </span>
+              <span
+                class="el-upload-list__item-delete"
+                @click="handleRemove(file)"
+              >
+                <span title="移除" class="hover:text-(--el-color-danger)">
                   <IconifyIconOffline
-                    :icon="Eye"
+                    :icon="Delete"
                     class="hover:scale-125 duration-100"
                   />
                 </span>
-                <span
-                  class="el-upload-list__item-delete"
-                  @click="handleRemove(file)"
-                >
-                  <span title="移除" class="hover:text-(--el-color-danger)">
-                    <IconifyIconOffline
-                      :icon="Delete"
-                      class="hover:scale-125 duration-100"
-                    />
-                  </span>
-                </span>
               </span>
-            </div>
-          </template>
-        </el-upload>
-        <el-image-viewer
-          v-if="dialogVisible"
-          :url-list="previewUrlList"
-          :initial-index="curOpenImgIndex"
-          @close="dialogVisible = false"
-        />
+            </span>
+          </div>
+        </template>
+      </el-upload>
+      <el-image-viewer
+        v-if="dialogVisible"
+        :url-list="previewUrlList"
+        :initial-index="curOpenImgIndex"
+        @close="dialogVisible = false"
+      />
     </el-form-item>
-
   </el-form>
 </template>
